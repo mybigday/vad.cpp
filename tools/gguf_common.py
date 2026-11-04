@@ -17,8 +17,6 @@ _FILE_TYPES = {Q.F32: "ALL_F32", Q.F16: "MOSTLY_F16", Q.BF16: "MOSTLY_BF16", Q.Q
 ELEMENTWISE = {
     "firered": r"^fsmn\d+\.w$",
     "smart_turn": r"^(pos|fe\.mel)$",
-    # host-side tables, convolution taps, attention biases and the per-head position projection
-    "who": r"^(fe\.mel|voice\.|embed\.|enc\.down\.depthwise|enc\.conv\.\d+\.conv\.depthwise|enc\.attn\.\d+\.(pos_bias|content_bias|w_pos)|dec\.(query_feat|query_pos|pairing))",
 }
 
 

@@ -2,9 +2,7 @@
 
 ## Models
 
-| model | output | license | plan |
-|---|---|---|---|
-| [desert-ant-labs/who](https://huggingface.co/desert-ant-labs/who) | speaker diarization / recognition | Desert Ant Labs Source-Available | planned; only ONNX/TFLite/Core ML are published, so it needs an ONNX converter |
+No new models planned. desert-ant-labs/who was evaluated and dropped: its license does not allow porting the SDK logic its pipeline depends on.
 
 Done: [nvidia/Nemotron-3-Diarization](https://huggingface.co/nvidia/Nemotron-3-Diarization) (`sortformer`, docs/gguf.md). It loads NVIDIA's GGUF as is and the safetensors through `tools/convert_sortformer.py`. Offline and streaming match the transformers implementation within 2e-5 on CPU. Open items:
 - The `head.activity_head` of the published GGUF (LayerNorm + 3 classes) is not in the reference model. Expose it once its meaning is documented.
