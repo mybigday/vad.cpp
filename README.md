@@ -164,7 +164,7 @@ Measured on the jfk sample (CPU, `cpu` device), as reported by the tests (not ch
 | silero-v6.2 F16 | 3.2e-3 | 0.62 MB |
 | silero-v6.2 Q8_0 | 0.21 | 0.48 MB |
 | firered-stream F16 / Q8_0 | 2.8e-3 / 2.3e-2 | 1.2 / 0.73 MB |
-| smart-turn-v3.2 F16 / Q8_0 | 1.4e-4 / 2.4e-3 | 16 / 9.4 MB |
+| smart-turn-v3.2 F16 / Q8_0 | 1.3e-4 / 2.4e-3 | 16 / 9.4 MB |
 
 Speed on the x86 test machine (1 thread, streaming, jfk sample):
 - F16 helps where weight bandwidth matters (`vad-cpu` converts with F16C/AVX-512/NEON):
@@ -189,7 +189,7 @@ Effect on Cortex-A78, against the same model's F32 file (67.8 s and 11 s samples
 | silero-v6.2 F16 | 4.9e-3 / 6.7e-5 | 1.7e-2 / 2.5e-4 | 0 / 0 |
 | firered-stream F16 | 3.0e-3 / 8.2e-5 | 7.6e-3 / 1.6e-4 | 0 / 0 |
 | firered-vad F16 | 1.8e-3 / 2.7e-5 | 3.3e-3 / 7.8e-5 | 1 / 1 of 6778 |
-| smart-turn-v3.2 F16 | 2.1e-3 / 3.0e-4 | 4.4e-3 / 7.4e-4 | 0 / 0 |
+| smart-turn-v3.2 F16 | 2.1e-3 / 2.9e-4 | 5.7e-3 / 6.6e-4 | 0 / 1 of 159 (0.498 → 0.501) |
 | silero-v6.2 Q8_0 | 0.29 / 4.2e-3 | 0.33 / 5.4e-3 | 3 / 6 of 2119 |
 | firered-stream Q8_0 | 2.3e-2 / 1.0e-3 | 2.7e-2 / 1.1e-3 | 0 / 0 |
 | smart-turn-v3.2 Q8_0 | 5.0e-2 / 6.0e-3 | 8.0e-2 / 9.0e-3 | 2 / 2 of 136 |

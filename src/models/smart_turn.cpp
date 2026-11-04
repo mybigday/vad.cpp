@@ -70,7 +70,9 @@ public:
         }
         // model (docs/gguf.md); conv weights are (Cout, 3, Cin) to match the [3 * Cin] window view
         const int64_t F = 4 * D_;
-        mel_ = wb.mat("fe.mel", NBIN, NMEL);
+        // always F32: its input, the power spectrum, reaches ~1e5 and overflows F16, so
+        // a backend that converts activations to the weight type (ggml-cpu, GPUs) must not see F16
+        mel_ = wb.f32("fe.mel", { NBIN, NMEL });
         conv1_w_ = wb.mat("conv1.w", 3 * NMEL, D_);
         conv1_b_ = wb.f32("conv1.b", { D_ });
         conv2_w_ = wb.mat("conv2.w", 3 * D_, D_);

@@ -1,10 +1,13 @@
 // Debug: run one model graph on a device and on the CPU (without the scheduler, so
 // ops the device rejects still run on it), print the first nodes whose outputs differ. usage: compare_backends MODEL DEVICE [B] [T]
+// Across builds (e.g. native vs WASM): VAD_COMPARE_DUMP=file writes every node output of the
+// DEVICE run, VAD_COMPARE_REF=file compares the DEVICE run against such a dump instead of the CPU.
 #include "../../src/vad-impl.h"
 #include "ggml-alloc.h"
 #include "ggml-backend.h"
 #include "ggml-cpu.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -14,7 +17,7 @@
 
 using namespace vad;
 
-struct cb_state { int shown = 0; };
+struct cb_state { int shown = 0; FILE * dump = nullptr; FILE * ref = nullptr; double tol = 1e-3; };
 
 static bool cb(int i, ggml_tensor * t1, ggml_tensor * t2, void * ud) {
     auto * st = (cb_state *) ud;
@@ -22,10 +25,21 @@ static bool cb(int i, ggml_tensor * t1, ggml_tensor * t2, void * ud) {
     const int64_t n = ggml_nelements(t1);
     std::vector<float> a(n), b(n);
     ggml_backend_tensor_get(t1, a.data(), 0, ggml_nbytes(t1));   // contiguous copies made by the compare helper
-    ggml_backend_tensor_get(t2, b.data(), 0, ggml_nbytes(t2));
+    if (st->dump) {
+        fwrite(&n, sizeof n, 1, st->dump);
+        fwrite(a.data(), sizeof(float), n, st->dump);
+        return true;
+    }
+    if (st->ref) {
+        int64_t rn = 0;
+        if (fread(&rn, sizeof rn, 1, st->ref) != 1 || rn != n) { printf("node %d: reference dump does not match the graph\n", i); return false; }
+        if (fread(b.data(), sizeof(float), n, st->ref) != (size_t) n) return false;
+    } else {
+        ggml_backend_tensor_get(t2, b.data(), 0, ggml_nbytes(t2));
+    }
     double md = 0, mx = 0;
     for (int64_t k = 0; k < n; ++k) { md = std::max(md, (double) std::fabs(a[k] - b[k])); mx = std::max(mx, (double) std::fabs(b[k])); }
-    if (md > 1e-3 * (1 + mx) && st->shown < 15) {
+    if (md > st->tol * (1 + mx) && st->shown < 15) {
         printf("node %4d %-10s %-14s [%lld,%lld,%lld] max|diff| %.3g (max|x| %.3g)\n", i, ggml_op_desc(t1), t1->name,
                (long long) t1->ne[0], (long long) t1->ne[1], (long long) t1->ne[2], md, mx);
         st->shown++;
@@ -65,7 +79,7 @@ int main(int argc, char ** argv) {
     graph_opts o; o.host = false;
     ggml_init_params sp = { ggml_tensor_overhead() * 2, nullptr, true };
     ggml_context * sctx = ggml_init(sp);
-    ggml_tensor * state = ggml_new_tensor_2d(sctx, GGML_TYPE_F32, a->state_size(), B);
+    ggml_tensor * state = ggml_new_tensor_2d(sctx, GGML_TYPE_F32, std::max<int64_t>(1, a->state_size()), B);   // stateless models: a dummy
     ggml_backend_alloc_ctx_tensors(sctx, be);
     graph_io io = a->build_graph(gctx, gf, B, T, o, state);
     if (io.frame_mask) {
@@ -74,14 +88,21 @@ int main(int argc, char ** argv) {
     }
     ggml_gallocr_t ga = ggml_gallocr_new(ggml_backend_get_default_buffer_type(be));
     ggml_gallocr_alloc_graph(ga, gf);
-    std::mt19937 rng(3); std::normal_distribution<float> nd(0, 0.1f);
+    // same inputs on every standard library (distributions are implementation defined)
+    std::mt19937 rng(3);
+    auto nd = [&] { return ((float) (rng() >> 8) / 16777216.0f - 0.5f) * 0.35f; };
     std::vector<float> x(ggml_nelements(io.audio)), s(ggml_nelements(state));
-    for (auto & v : x) v = nd(rng);
-    for (auto & v : s) v = nd(rng);
+    for (auto & v : x) v = nd();
+    for (auto & v : s) v = nd();
     ggml_backend_tensor_set(io.audio, x.data(), 0, ggml_nbytes(io.audio));
     ggml_backend_tensor_set(state, s.data(), 0, ggml_nbytes(state));
     cb_state st;
+    if (const char * f = getenv("VAD_COMPARE_DUMP")) st.dump = fopen(f, "wb");
+    if (const char * f = getenv("VAD_COMPARE_REF"))  st.ref  = fopen(f, "rb");
+    if (const char * f = getenv("VAD_COMPARE_TOL"))  st.tol  = atof(f);   // relative threshold, default 1e-3
     ggml_backend_compare_graph_backend(be, cpu, gf, cb, &st, nullptr, 0);
+    if (st.dump) fclose(st.dump);
+    if (st.ref) fclose(st.ref);
     printf("%d differing nodes shown\n", st.shown);
     return 0;
 }

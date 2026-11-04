@@ -9,12 +9,11 @@
 Done: [nvidia/Nemotron-3-Diarization](https://huggingface.co/nvidia/Nemotron-3-Diarization) (`sortformer`, docs/gguf.md). It loads NVIDIA's GGUF as is and the safetensors through `tools/convert_sortformer.py`. Offline and streaming match the transformers implementation within 2e-5 on CPU. Open items:
 - The `head.activity_head` of the published GGUF (LayerNorm + 3 classes) is not in the reference model. Expose it once its meaning is documented.
 - `vad_streams_push` runs diarization streams one after another. Batching the chunk steps of several streams needs per-stream masks in one encoder graph.
-- Web and ARM have not been tried yet. The F32 file is 400 MB and NVIDIA's Q8_0 file is 107 MB.
+- Verified on WASM (node, single-threaded, about 12 min for the test) and on a Pixel 7 Pro (Android NDK, within 1.3e-5 of the reference). The browser/WebGPU path has not been tried with the 400 MB F32 file.
 
 ## Platforms
 
 - **Web:** WASM (CPU, SIMD128) and WebGPU are done (docs/platforms.md).
-  - Open issue: ggml-cpu (not `vad-cpu`) on WASM gives wrong results with F16 weights (smart-turn F16: 0.52 deviation). Investigate or report upstream.
 - **ARM:**
   - Verified on a MediaTek Genio board (aarch64 Linux, Cortex-A55 + A78) and a Pixel 7 Pro (Android 14, NDK build, Tensor G2): all tests pass with the `vad-cpu` kernels.
   - Benchmarks are in `bench/results/arm_genio.txt`.

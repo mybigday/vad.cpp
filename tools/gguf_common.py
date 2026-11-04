@@ -16,7 +16,7 @@ _FILE_TYPES = {Q.F32: "ALL_F32", Q.F16: "MOSTLY_F16", Q.BF16: "MOSTLY_BF16", Q.Q
 # Keep in sync with the f32() calls in src/models/*.cpp.
 ELEMENTWISE = {
     "firered": r"^fsmn\d+\.w$",
-    "smart_turn": r"^pos$",
+    "smart_turn": r"^(pos|fe\.mel)$",
 }
 
 

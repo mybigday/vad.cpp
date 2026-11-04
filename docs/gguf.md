@@ -103,7 +103,7 @@ Metadata:
 
 | tensor | PyTorch shape | kind | |
 |---|---|---|---|
-| `fe.mel` | (80, 201) | W | slaney mel filters (identical to transformers' `WhisperFeatureExtractor`) |
+| `fe.mel` | (80, 201) | F | slaney mel filters (identical to transformers' `WhisperFeatureExtractor`). Loaded as F32 whatever its file type: its input, the power spectrum, overflows F16 |
 | `conv1.w` / `conv1.b` | (D, 3, 80) / (D) | W / F | |
 | `conv2.w` / `conv2.b` | (D, 3, D) / (D) | W / F | stride 2 |
 | `pos` | (400, D) | F | positions |
