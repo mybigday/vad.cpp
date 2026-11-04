@@ -19,7 +19,7 @@ namespace {
 
 const vadk::table & kern() { static const vadk::table & t = vadk::get(); return t; }
 
-enum class StepKind { GEMM, UNARY, BINARY, COPY, COPY_STRIDED, CONCAT, PAD, PAD_REFLECT, CLAMP, SSM_CONV, FSMN, NORM, SCALE, SOFT_MAX, ROPE, DELEGATE };
+enum class StepKind { GEMM, UNARY, BINARY, COPY, COPY_STRIDED, CONCAT, PAD, PAD_REFLECT, CLAMP, SSM_CONV, FSMN, NORM, SCALE, SOFT_MAX, ROPE, CUSTOM, DELEGATE };
 
 struct Step {
     StepKind kind;
@@ -328,6 +328,8 @@ Plan build_plan(Context & ctx, ggml_cgraph * g) {
         } else if (t->op == GGML_OP_SSM_CONV && is_f32_rows(t->src[0]) && t->src[1]->type == GGML_TYPE_F32 &&
                    ggml_is_contiguous(t->src[1]) && is_f32_rows(t)) {
             s.kind = StepKind::SSM_CONV; s.a = t->src[0]; s.b = t->src[1]; s.dst = t; ok = true;
+        } else if (t->op == GGML_OP_CUSTOM) {   // ggml_custom_4d: the op's own function on vad-cpu's threads
+            s.kind = StepKind::CUSTOM; s.dst = t; ok = true;
         } else if (t->op == GGML_OP_NORM && is_f32_rows(t->src[0]) && is_f32_rows(t) && ggml_are_same_shape(t, t->src[0])) {
             s.kind = StepKind::NORM; s.a = t->src[0]; s.dst = t; ok = true;
         } else if (t->op == GGML_OP_SCALE && is_f32_rows(t->src[0]) && is_f32_rows(t) && ggml_are_same_shape(t, t->src[0])) {
@@ -794,6 +796,14 @@ void run_step(Context & ctx, ggml_cgraph * g, const Step & s) {
                 const int n_tasks = (int) std::min<int64_t>(J, nt * 4);
                 ctx.pool->run(n_tasks, [&](int i) { work(J * i / n_tasks, J * (i + 1) / n_tasks); });
             }
+        } break;
+        case StepKind::CUSTOM: {
+            ggml_custom_op_params p;
+            std::memcpy(&p, s.dst->op_params, sizeof p);
+            const int nt = ctx.pool ? ctx.pool->size() : 1;
+            const int n_tasks = p.n_tasks == GGML_N_TASKS_MAX ? nt : std::max(1, std::min(p.n_tasks, nt));
+            if (n_tasks == 1) p.fun(s.dst, 0, 1, p.userdata);
+            else ctx.pool->run(n_tasks, [&](int i) { p.fun(s.dst, i, n_tasks, p.userdata); });
         } break;
         case StepKind::NORM: {
             const ggml_tensor * a = s.a, * d = s.dst;

@@ -20,6 +20,7 @@ Done: [nvidia/Nemotron-3-Diarization](https://huggingface.co/nvidia/Nemotron-3-D
 
 ## Performance
 
+- Done on every backend: the FireRed and smart-turn spectra are an FFT op (`src/models/frame_dft.cpp`, 8 frames per pass, run on the CPU) instead of a DFT-matrix mul_mat that read 0.8 MB (FireRed) per frame. FireRed single-frame streaming: 37 → 29 µs on x86, 137 → 123 µs on a Pixel X1 core; smart-turn unchanged.
 - Done on x86 (AMD Zen 5, `bench/results/`): `vad-cpu` beats ggml-cpu on every model, precision, thread count (1–16) and benchmark mode.
   - The large-batch GEMM is a cache-blocked, register-tiled microkernel with K blocking and 2D task tiling.
   - The thread pool has per-thread task ranges, work stealing and per-task completion.
@@ -33,8 +34,7 @@ Done: [nvidia/Nemotron-3-Diarization](https://huggingface.co/nvidia/Nemotron-3-D
     - smart-turn F16 single-window streaming on the Genio's A78: 3–7% behind ggml-cpu at 4 and 8 threads (it wins offline, and on the Pixel by 1.6–2×). Routing its many-row GEMMs through the cache-blocked F32 kernel was tried and was slower on the Pixel.
   - To do:
     - SVE variants.
-    - A faster front end. The FireRed fbank is a 400 → 514 F32 DFT matrix (~0.8 MB per frame). A real FFT would remove most of it on every backend.
-- **Stream vs offline on aarch64.** FireRed differs by 1.8e-7 between streaming and offline, even for F32 files (exact on x86). Within tolerance; the cause is not located yet.
+- **Stream vs offline.** FireRed differs by 1.8e-7 between streaming (or batched streams) and offline on `vad-cpu`, even for F32 files, on x86 and aarch64 (ggml-cpu is exact). Within tolerance; the cause is not located yet.
 - **int8 dot product (VNNI) for Q8_0 files on x86.** On x86 the Q8_0 path is still weight-only (int8 → F32 per element), so it is slower than F32. ARM already uses int8 activations with `SDOT`.
 - Fuse the LSTM cell for Silero's multi-chunk graphs.
 - Batch sliding-window streams across streams in `vad_streams_push`.

@@ -92,8 +92,13 @@ add_library(vad
     src/models/silero.cpp
     src/models/firered.cpp
     src/models/smart_turn.cpp
+    src/models/frame_dft.cpp
     src/models/sortformer.cpp)
 target_include_directories(vad PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+if(NOT MSVC)
+    # one frame (streaming) and 8 frames at once (offline) must give identical spectra
+    set_source_files_properties(src/models/frame_dft.cpp PROPERTIES COMPILE_OPTIONS "-ffp-contract=off")
+endif()
 target_link_libraries(vad PUBLIC ggml)
 if(VAD_CPU_KERNELS)
     target_link_libraries(vad PRIVATE ggml-vad-cpu)

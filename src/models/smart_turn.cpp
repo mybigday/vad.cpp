@@ -9,6 +9,7 @@
 // transformer layers, final LN) -> attention pooling over time -> classifier
 // (Linear, LayerNorm, GELU, Linear, GELU, Linear) -> sigmoid.
 #include "common.h"
+#include "frame_dft.h"
 
 #include <cfloat>
 #include <cmath>
@@ -56,17 +57,11 @@ public:
     size_t max_nodes(int, int) const override { return 256 + (size_t) L_ * 64; }
 
     bool create_weights(weight_builder & wb) override {
-        // STFT basis: periodic Hann x DFT, rows [Re(0..200), Im(0..200)]
+        // STFT: periodic Hann window, 400-point FFT -> [Re(0..200), Im(0..200)]
         {
-            std::vector<float> basis((size_t) NFFT * 2 * NBIN);
-            for (int k = 0; k < NBIN; ++k)
-                for (int n = 0; n < NFFT; ++n) {
-                    const double w = 0.5 - 0.5 * std::cos(2 * M_PI * n / NFFT);
-                    const double ang = 2 * M_PI * (double) k * n / NFFT;
-                    basis[(size_t) k * NFFT + n] = (float) (w * std::cos(ang));
-                    basis[(size_t) (NBIN + k) * NFFT + n] = (float) (-w * std::sin(ang));
-                }
-            basis_ = wb.constant("fe.basis", { NFFT, 2 * NBIN }, basis);
+            std::vector<float> win(NFFT);
+            for (int n = 0; n < NFFT; ++n) win[n] = (float) (0.5 - 0.5 * std::cos(2 * M_PI * n / NFFT));
+            if (!dft_.init(NFFT, NFFT, std::move(win))) return false;
         }
         // model (docs/gguf.md); conv weights are (Cout, 3, Cin) to match the [3 * Cin] window view
         const int64_t F = 4 * D_;
@@ -126,7 +121,7 @@ public:
         ggml_tensor * x = ggml_norm(c, io.audio, 1e-7f);                                         // zero mean, unit variance
         x = ggml_pad_reflect_1d(c, x, NFFT / 2, NFFT / 2);                                       // center=True
         ggml_tensor * frames = sliding_windows(c, x, NFFT, NF, HOP, B, x->nb[1], o);    // last frame dropped
-        ggml_tensor * spec = mm(c, basis_, frames, o, true);                                     // [402, 800, B]
+        ggml_tensor * spec = dft_.build(c, frames, o);                                           // [402, 800, B]
         ggml_tensor * re = ggml_view_3d(c, spec, NBIN, NF, B, spec->nb[1], spec->nb[2], 0);
         ggml_tensor * im = ggml_view_3d(c, spec, NBIN, NF, B, spec->nb[1], spec->nb[2], NBIN * sizeof(float));
         ggml_tensor * pw = ggml_add(c, ggml_mul(c, re, re), ggml_mul(c, im, im));
@@ -205,7 +200,8 @@ private:
     }
 
     int64_t window_ = 0, L_ = 0, D_ = 0, NH_ = 0, NCTX_ = 0;
-    ggml_tensor * basis_ = nullptr, * mel_ = nullptr, * conv1_w_ = nullptr, * conv1_b_ = nullptr, * conv2_w_ = nullptr, * conv2_b_ = nullptr;
+    frame_dft dft_;
+    ggml_tensor * mel_ = nullptr, * conv1_w_ = nullptr, * conv1_b_ = nullptr, * conv2_w_ = nullptr, * conv2_b_ = nullptr;
     ggml_tensor * pos_ = nullptr, * lnf_w_ = nullptr, * lnf_b_ = nullptr;
     ggml_tensor * pa0_w_ = nullptr, * pa0_b_ = nullptr, * pa2_w_ = nullptr, * pa2_b_ = nullptr;
     ggml_tensor * c0_w_ = nullptr, * c0_b_ = nullptr, * c1_w_ = nullptr, * c1_b_ = nullptr, * c4_w_ = nullptr, * c4_b_ = nullptr;

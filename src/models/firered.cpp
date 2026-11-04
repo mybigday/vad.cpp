@@ -8,8 +8,7 @@
 // Features (kaldi-native-fbank defaults used by FireRedVAD): 16 kHz int16-scaled
 // samples, 25 ms Povey window, 10 ms hop, snip_edges, DC removal, pre-emphasis
 // 0.97, 512-point power spectrum, 80 mel bins (20 Hz .. 8 kHz), log with
-// FLT_EPSILON floor, then CMVN. Everything up to the power spectrum is linear per
-// frame, so it is one mul_mat with a precomputed (400 -> 2 x 257) basis; CMVN is
+// FLT_EPSILON floor, then CMVN. The spectrum is a CPU FFT op (frame_dft.h); CMVN is
 // folded into the first Linear layer.
 //
 // Model: fc1 (80->H) relu, fc2 (H->P) relu, FSMN, (R-1) x [fc1 relu, fc2 (no bias),
@@ -18,6 +17,7 @@
 //
 // Per-stream state: [audio context 240 | R x FSMN cache (N1-1 frames x P, time-major)].
 #include "common.h"
+#include "frame_dft.h"
 
 #include <cfloat>
 #include <cmath>
@@ -77,33 +77,11 @@ public:
     size_t max_nodes(int, int) const override { return 256 + (size_t) R_ * 24; }
 
     bool create_weights(weight_builder & wb) override {
-        // fbank constants: int16 scale, DC removal, pre-emphasis, Povey window, DFT -> [Re(0..256), Im(0..256)]
+        // fbank front end: int16 scale, DC removal, pre-emphasis, Povey window, 512-point FFT -> [Re(0..256), Im(0..256)]
         {
-            std::vector<double> win(WIN);
-            for (int n = 0; n < WIN; ++n) win[n] = std::pow(0.5 - 0.5 * std::cos(2 * M_PI * n / (WIN - 1)), 0.85);
-            std::vector<float> basis((size_t) WIN * 2 * NBIN);
-            std::vector<double> row(WIN), r2(WIN);
-            for (int k = 0; k < NBIN; ++k) {
-                for (int part = 0; part < 2; ++part) {
-                    for (int n = 0; n < WIN; ++n) {
-                        const double ang = 2 * M_PI * (double) k * n / NFFT;
-                        row[n] = win[n] * (part == 0 ? std::cos(ang) : -std::sin(ang));
-                    }
-                    // pre-emphasis y[n] = x[n] - 0.97 x[n-1] (y[0] = 0.03 x[0]), folded into the row
-                    std::fill(r2.begin(), r2.end(), 0.0);
-                    for (int n = 0; n < WIN; ++n) {
-                        r2[n] += row[n] * (n == 0 ? 1.0 - 0.97 : 1.0);
-                        if (n > 0) r2[n - 1] += -0.97 * row[n];
-                    }
-                    // DC removal x - mean(x): subtract the mean of the row
-                    double mean = 0;
-                    for (double v : r2) mean += v;
-                    mean /= WIN;
-                    for (int n = 0; n < WIN; ++n)
-                        basis[(size_t) (part * NBIN + k) * WIN + n] = (float) ((r2[n] - mean) * 32768.0);
-                }
-            }
-            basis_ = wb.constant("fbank.basis", { WIN, 2 * NBIN }, basis);
+            std::vector<float> win(WIN);
+            for (int n = 0; n < WIN; ++n) win[n] = (float) std::pow(0.5 - 0.5 * std::cos(2 * M_PI * n / (WIN - 1)), 0.85);
+            if (!dft_.init(WIN, NFFT, std::move(win), 32768.0f, true, 0.97f)) return false;
         }
         // mel filterbank [257 -> 80] (Kaldi: bins 0..255, Nyquist bin unused)
         {
@@ -160,7 +138,7 @@ public:
             mask = ggml_reshape_3d(c, io.frame_mask, 1, T, B);
         }
         ggml_tensor * frames = sliding_windows(c, full, WIN, T, HOP, B, full->nb[1], o);
-        ggml_tensor * spec = mm(c, basis_, frames, o, true);                                        // [514, T, B]
+        ggml_tensor * spec = dft_.build(c, frames, o);                                              // [514, T, B]
         ggml_tensor * re = ggml_view_3d(c, spec, NBIN, T, B, spec->nb[1], spec->nb[2], 0);
         ggml_tensor * im = ggml_view_3d(c, spec, NBIN, T, B, spec->nb[1], spec->nb[2], NBIN * sizeof(float));
         ggml_tensor * pw = ggml_add(c, ggml_mul(c, re, re), ggml_mul(c, im, im));               // [257, T, B]
@@ -217,7 +195,8 @@ private:
     }
 
     int64_t R_ = 0, M_ = 0, H_ = 0, P_ = 0, N1_ = 0, N2_ = 0;
-    ggml_tensor * basis_ = nullptr, * mel_ = nullptr, * fc1_w_ = nullptr, * fc1_b_ = nullptr, * fc2_w_ = nullptr, * fc2_b_ = nullptr;
+    frame_dft dft_;
+    ggml_tensor * mel_ = nullptr, * fc1_w_ = nullptr, * fc1_b_ = nullptr, * fc2_w_ = nullptr, * fc2_b_ = nullptr;
     ggml_tensor * out_w_ = nullptr, * out_b_ = nullptr;
     std::vector<ggml_tensor *> fsmn_w_, blk_fc1_w_, blk_fc1_b_, blk_fc2_w_, dnn_w_, dnn_b_;
 };
