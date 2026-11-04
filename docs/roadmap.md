@@ -26,6 +26,7 @@ Done: [nvidia/Nemotron-3-Diarization](https://huggingface.co/nvidia/Nemotron-3-D
   - The thread pool has per-thread task ranges, work stealing and per-task completion.
   - SSM_CONV, FSMN, ROPE and softmax with masks run natively.
   - Unary math is vectorized.
+  - `vad_streams_push` batches the windows of sliding-window streams (up to 8 per compute; FireRed VAD, 64 streams, 8 threads: 16.4 → 11.8 µs per stream frame).
   - Q8_0 with int8 activations on AVX-512 VNNI (`avx512-vnni` variant): about 2× faster than before and faster than F32.
 - **ARM.**
   - Done: an ARMv8.2 (fp16 + dotprod) variant chosen at runtime, NEON register tiles, streaming one-row F32 GEMV, and per-ISA thread-pool tuning (timed spin; few-row GEMMs split only when the work pays for the dispatch, 2 chunks per thread for big.LITTLE).
@@ -40,4 +41,3 @@ Done: [nvidia/Nemotron-3-Diarization](https://huggingface.co/nvidia/Nemotron-3-D
   - It reproduces outside the runtime: one 1-frame graph replayed with its state resident vs one 64-frame graph, both allocated with buffer reuse (`ggml_gallocr`), differ from frame 3. With every node marked as an output (no buffer reuse) they agree exactly, and a replayed step equals a freshly built one from the same state. No GEMM sees an aliased input, and protecting any half of the nodes is not enough, so the suspect is something address-dependent across many steps (e.g. alignment-dependent vectorization in a reduction).
 - **AVX-VNNI (VEX) for Q8_0 on AVX2-only x86** (e.g. Alder Lake): the AVX-512 VNNI variant is done; CPUs without AVX-512 still convert int8 weights to F32.
 - Fuse the LSTM cell for Silero's multi-chunk graphs.
-- Batch sliding-window streams across streams in `vad_streams_push`.

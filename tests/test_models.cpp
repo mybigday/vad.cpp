@@ -99,7 +99,8 @@ int main() {
             if (!streaming) {
                 // sliding-window streaming: push (random sizes) + flush == vad_detect with the maximum
                 // lookahead; with less lookahead the deviation is reported (accuracy/latency trade-off)
-                auto run_stream = [&](int lookahead, int slice, std::vector<float> & got) {
+                auto run_stream = [&](int lookahead, int slice, std::vector<float> & got, const std::vector<float> * src = nullptr) {
+                    const std::vector<float> & audio_in = src ? *src : audio;
                     vad_stream_params sp = vad_stream_default_params();
                     sp.lookahead_samples = lookahead;
                     sp.slice_samples = slice;
@@ -108,10 +109,10 @@ int main() {
                     if (!st) return;
                     std::mt19937 r3(5);
                     size_t at = 0;
-                    while (at < audio.size()) {
-                        const int len = std::min<int>((int) (audio.size() - at), std::uniform_int_distribution<int>(1, 6000)(r3));
+                    while (at < audio_in.size()) {
+                        const int len = std::min<int>((int) (audio_in.size() - at), std::uniform_int_distribution<int>(1, 6000)(r3));
                         std::vector<float> p(vad_stream_n_pending(st, len));
-                        const int g = vad_stream_push(st, audio.data() + at, len, p.data(), (int) p.size());
+                        const int g = vad_stream_push(st, audio_in.data() + at, len, p.data(), (int) p.size());
                         CHECK(g == (int) p.size(), "window push %d vs %zu", g, p.size());
                         got.insert(got.end(), p.begin(), p.end());
                         at += len;
@@ -132,6 +133,85 @@ int main() {
                     run_stream(la_ms * 16, 8000, g);
                     char b[64];
                     snprintf(b, sizeof b, "  la %dms %.2e", la_ms, max_diff(g.data(), off.data(), std::min<int>(n, (int) g.size())));
+                    extra += b;
+                }
+                // several window streams through vad_streams_push (windows batched) == each alone
+                {
+                    const int S = 3;
+                    std::vector<std::vector<float>> au(S), alone(S), got(S);
+                    std::vector<vad_stream *> st(S);
+                    vad_stream_params sp = vad_stream_default_params();
+                    sp.lookahead_samples = 400 * 16;
+                    sp.slice_samples = 4000;
+                    for (int i = 0; i < S; ++i) {
+                        au[i] = audio;
+                        std::rotate(au[i].begin(), au[i].begin() + (size_t) i * 7919 % au[i].size(), au[i].end());
+                        st[i] = vad_stream_new_with_params(m, sp);
+                    }
+                    // the same push sizes for the batched and the single runs (with less than the
+                    // maximum lookahead, results depend on when windows run)
+                    std::vector<std::vector<int>> lens_of(S);
+                    {
+                        std::mt19937 r4(9);
+                        std::vector<size_t> pos(S, 0);
+                        for (bool more = true; more;) {
+                            more = false;
+                            for (int i = 0; i < S; ++i) {
+                                const int l = std::min<int>((int) (au[i].size() - pos[i]), std::uniform_int_distribution<int>(1, 6000)(r4));
+                                lens_of[i].push_back(l);
+                                pos[i] += l;
+                                more |= pos[i] < au[i].size();
+                            }
+                        }
+                    }
+                    for (int i = 0; i < S; ++i) {
+                        vad_stream * one = vad_stream_new_with_params(m, sp);
+                        size_t pos = 0;
+                        for (int l : lens_of[i]) {
+                            std::vector<float> p(vad_stream_n_pending(one, l) + 1);
+                            const int g = vad_stream_push(one, au[i].data() + pos, l, p.data(), (int) p.size());
+                            alone[i].insert(alone[i].end(), p.begin(), p.begin() + std::max(0, g));
+                            pos += l;
+                        }
+                        std::vector<float> p(vad_stream_n_flush(one));
+                        vad_stream_flush(one, p.data(), (int) p.size());
+                        alone[i].insert(alone[i].end(), p.begin(), p.end());
+                        vad_stream_free(one);
+                    }
+                    size_t step = 0;
+                    std::vector<size_t> at(S, 0);
+                    for (bool more = true; more;) {
+                        more = false;
+                        std::vector<const float *> ptr(S);
+                        std::vector<int> len(S), maxp(S), nout(S);
+                        std::vector<std::vector<float>> out(S);
+                        std::vector<float *> outp(S);
+                        for (int i = 0; i < S; ++i) {
+                            len[i] = lens_of[i][step];
+                            ptr[i] = au[i].data() + at[i];
+                            out[i].resize(vad_stream_n_pending(st[i], len[i]) + 1);
+                            outp[i] = out[i].data(); maxp[i] = (int) out[i].size();
+                        }
+                        CHECK(vad_streams_push(st.data(), S, ptr.data(), len.data(), outp.data(), maxp.data(), nout.data()) == 0, "window streams_push");
+                        ++step;
+                        for (int i = 0; i < S; ++i) {
+                            got[i].insert(got[i].end(), out[i].begin(), out[i].begin() + nout[i]);
+                            at[i] += len[i];
+                            more |= at[i] < au[i].size();
+                        }
+                    }
+                    float d_b = 0;
+                    for (int i = 0; i < S; ++i) {
+                        std::vector<float> p(vad_stream_n_flush(st[i]));
+                        CHECK(vad_stream_flush(st[i], p.data(), (int) p.size()) == (int) p.size(), "flush");
+                        got[i].insert(got[i].end(), p.begin(), p.end());
+                        CHECK(got[i].size() == alone[i].size(), "batched window stream %d: %zu vs %zu frames", i, got[i].size(), alone[i].size());
+                        d_b = std::max(d_b, max_diff(got[i].data(), alone[i].data(), (int) std::min(got[i].size(), alone[i].size())));
+                        vad_stream_free(st[i]);
+                    }
+                    CHECK(d_b <= tol_same, "%s %s: batched window streams vs alone %.3g", spec.c_str(), mc.file.c_str(), d_b);
+                    char b[48];
+                    snprintf(b, sizeof b, "  batched %.2e", d_b);
                     extra += b;
                 }
                 fprintf(stderr, "%-9s %-28s vs-official %.2e%s  window-stream %.2e%s\n", spec.c_str(), mc.file.c_str(), d_off,

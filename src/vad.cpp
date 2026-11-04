@@ -463,34 +463,75 @@ static int64_t window_ready(const vad_stream * s, int64_t total, bool flush) {
 
 // emits `ready` frames: one offline run over [emitted - lookback, emitted + ready + lookahead)
 // (clipped to the audio), so emitted frames see their full past and the chosen future
-static bool window_run(vad_stream * s, int64_t ready, float * probs) {
+struct window_job {
+    vad_stream * s = nullptr;
+    int64_t ready = 0, f0 = 0;
+    int nf = 0, T = 0;
+    std::vector<float> audio, out;
+    float * probs = nullptr;
+};
+
+static void window_prepare(vad_stream * s, int64_t ready, float * probs, window_job & j) {
     vad_model * m = s->model;
     const int cs = m->a->chunk_size();
     const int64_t avail = frames_in(s, s->total);
-    const int64_t f0 = std::max<int64_t>(0, s->emitted - m->a->lookback_frames());
+    j.s = s; j.ready = ready; j.probs = probs;
+    j.f0 = std::max<int64_t>(0, s->emitted - m->a->lookback_frames());
     const int64_t f1 = std::min<int64_t>(avail, s->emitted + ready + m->a->lookahead_frames());
-    const int nf = (int) (f1 - f0);
-    const int T = (nf + 63) / 64 * 64;
-    std::vector<float> buf(m->a->audio_samples(T), 0.0f);
-    const int64_t s0 = f0 * cs;
-    const int64_t n = std::min<int64_t>((int64_t) buf.size(), s->total - s0);
-    std::copy(s->hist.begin() + (s0 - s->hist0), s->hist.begin() + (s0 - s->hist0 + n), buf.begin());
-    std::vector<float> out(T);
-    const float * a = buf.data();
-    float * p = out.data();
-    {
-        std::lock_guard<std::mutex> lock(m->mu);
-        if (!m->compute(1, T, nullptr, &a, &p, &nf)) return false;
-    }
-    std::copy(out.begin() + (s->emitted - f0), out.begin() + (s->emitted - f0 + ready), probs);
-    s->emitted += ready;
+    j.nf = (int) (f1 - j.f0);
+    j.T = (j.nf + 63) / 64 * 64;
+    j.audio.assign(m->a->audio_samples(j.T), 0.0f);
+    const int64_t s0 = j.f0 * cs;
+    const int64_t n = std::min<int64_t>((int64_t) j.audio.size(), s->total - s0);
+    std::copy(s->hist.begin() + (s0 - s->hist0), s->hist.begin() + (s0 - s->hist0 + n), j.audio.begin());
+    j.out.assign(j.T, 0.0f);
+}
+
+static void window_finish(window_job & j) {
+    vad_stream * s = j.s;
+    vad_model * m = s->model;
+    std::copy(j.out.begin() + (s->emitted - j.f0), j.out.begin() + (s->emitted - j.f0 + j.ready), j.probs);
+    s->emitted += j.ready;
     // keep only what later windows can need
-    const int64_t keep = std::max<int64_t>(0, s->emitted - m->a->lookback_frames()) * cs;
+    const int64_t keep = std::max<int64_t>(0, s->emitted - m->a->lookback_frames()) * m->a->chunk_size();
     if (keep > s->hist0) {
         s->hist.erase(s->hist.begin(), s->hist.begin() + (keep - s->hist0));
         s->hist0 = keep;
     }
+}
+
+// windows of the same length (T) run as batched computes; padding frames are masked
+static bool window_run_all(vad_model * m, std::vector<window_job> & jobs) {
+    std::vector<size_t> order(jobs.size());
+    for (size_t i = 0; i < order.size(); ++i) order[i] = i;
+    std::stable_sort(order.begin(), order.end(), [&](size_t x, size_t y) { return jobs[x].T < jobs[y].T; });
+    for (size_t g0 = 0; g0 < order.size();) {
+        size_t g1 = g0;
+        // at most 8 windows per compute: larger batches stop fitting in cache (FireRed VAD, 64 streams:
+        // 1 thread 69 -> 67 us at 8, 88 us at 64; 8 threads 16.4 -> 11.8 us at 8)
+        constexpr size_t MAX_BATCH = 8;
+        while (g1 < order.size() && g1 - g0 < MAX_BATCH && jobs[order[g1]].T == jobs[order[g0]].T) ++g1;
+        std::vector<const float *> a;
+        std::vector<float *> p;
+        std::vector<int> nv;
+        for (size_t k = g0; k < g1; ++k) {
+            window_job & j = jobs[order[k]];
+            a.push_back(j.audio.data()); p.push_back(j.out.data()); nv.push_back(j.nf);
+        }
+        {
+            std::lock_guard<std::mutex> lock(m->mu);
+            if (!m->compute((int) a.size(), jobs[order[g0]].T, nullptr, a.data(), p.data(), nv.data())) return false;
+        }
+        g0 = g1;
+    }
+    for (window_job & j : jobs) window_finish(j);
     return true;
+}
+
+static bool window_run(vad_stream * s, int64_t ready, float * probs) {
+    std::vector<window_job> jobs(1);
+    window_prepare(s, ready, probs, jobs[0]);
+    return window_run_all(s->model, jobs);
 }
 
 // ---- TURN streams: one probability per slice, window ending at the slice boundary
@@ -729,7 +770,21 @@ int vad_streams_push(vad_stream ** streams, int n, const float * const * samples
             if (keep > s->hist0) { s->hist.erase(s->hist.begin(), s->hist.begin() + (keep - s->hist0)); s->hist0 = keep; }
         }
     }
+    // sliding-window streams: the windows of all streams, batched by length
+    std::vector<window_job> jobs;
     for (int i : other) {
+        vad_stream * s = streams[i];
+        if (s->kind != stream_kind::WINDOW) continue;
+        if (vad_stream_n_pending(s, n_samples[i]) > max_probs[i]) return -1;
+        s->hist.insert(s->hist.end(), samples[i], samples[i] + n_samples[i]);
+        s->total += n_samples[i];
+        const int64_t ready = window_ready(s, s->total, false);
+        n_out[i] = (int) ready;
+        if (ready > 0) { jobs.emplace_back(); window_prepare(s, ready, probs[i], jobs.back()); }
+    }
+    if (!jobs.empty() && !window_run_all(m, jobs)) return -1;
+    for (int i : other) {
+        if (streams[i]->kind == stream_kind::WINDOW) continue;
         const int r = vad_stream_push(streams[i], samples[i], n_samples[i], probs[i], max_probs[i]);
         if (r < 0) return -1;
         n_out[i] = r;
