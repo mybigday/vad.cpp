@@ -4,6 +4,11 @@ namespace vadk_generic { extern const vadk::table table; }
 #ifdef VADK_X86_VARIANTS
 namespace vadk_avx2   { extern const vadk::table table; }
 namespace vadk_avx512 { extern const vadk::table table; }
+namespace vadk_avx512vnni { extern const vadk::table table; }
+static bool has_avx512() {
+    return __builtin_cpu_supports("avx512f") && __builtin_cpu_supports("avx512bw") &&
+           __builtin_cpu_supports("avx512vl") && __builtin_cpu_supports("avx512dq");
+}
 #endif
 #ifdef VADK_ARM_VARIANTS
 #include <sys/auxv.h>
@@ -20,8 +25,8 @@ namespace vadk {
 static const table & select() {
 #ifdef VADK_X86_VARIANTS
     __builtin_cpu_init();
-    if (__builtin_cpu_supports("avx512f") && __builtin_cpu_supports("avx512bw") &&
-        __builtin_cpu_supports("avx512vl") && __builtin_cpu_supports("avx512dq")) return vadk_avx512::table;
+    if (has_avx512() && __builtin_cpu_supports("avx512vnni")) return vadk_avx512vnni::table;
+    if (has_avx512()) return vadk_avx512::table;
     if (__builtin_cpu_supports("avx2") && __builtin_cpu_supports("fma")) return vadk_avx2::table;
 #endif
 #ifdef VADK_ARM_VARIANTS
@@ -37,8 +42,8 @@ int available(const table ** out, int max) {
 #ifdef VADK_X86_VARIANTS
     __builtin_cpu_init();
     if (__builtin_cpu_supports("avx2") && __builtin_cpu_supports("fma")) push(vadk_avx2::table);
-    if (__builtin_cpu_supports("avx512f") && __builtin_cpu_supports("avx512bw") &&
-        __builtin_cpu_supports("avx512vl") && __builtin_cpu_supports("avx512dq")) push(vadk_avx512::table);
+    if (has_avx512()) push(vadk_avx512::table);
+    if (has_avx512() && __builtin_cpu_supports("avx512vnni")) push(vadk_avx512vnni::table);
 #endif
 #ifdef VADK_ARM_VARIANTS
     if (has_armv82()) push(vadk_armv82::table);

@@ -285,7 +285,7 @@ Plan build_plan(Context & ctx, ggml_cgraph * g) {
                     auto & q4 = ctx.packedq4[s.a];
                     if (q4.empty()) {
                         q4.resize((size_t) s.a->ne[0] * s.ldw);
-                        vadk::pack_q8_interleaved(s.packedq, s.a->ne[0], s.ldw, q4.data());
+                        vadk::pack_q8_interleaved(s.packedq, s.a->ne[0], s.ldw, q4.data(), kern().q8_lp_unsigned);
                     }
                     s.packedq = q4.data();
                     s.q8_interleaved = true;

@@ -35,7 +35,7 @@ Status: early.
     - packed weights,
     - batch rows flattened into one GEMM,
     - its own threading,
-    - kernels dispatched by ISA (AVX2 and AVX-512 at runtime; NEON with an ARMv8.2 fp16/dotprod variant chosen at runtime on Linux/Android; WASM SIMD at build time).
+    - kernels dispatched by ISA (AVX2, AVX-512 and AVX-512 VNNI at runtime; NEON with an ARMv8.2 fp16/dotprod variant chosen at runtime on Linux/Android; WASM SIMD at build time).
   - Other devices (Vulkan, CUDA, Metal, …) use the stock ggml backends.
 
 ## Build
@@ -171,7 +171,7 @@ Speed on the x86 test machine (1 thread, streaming, jfk sample):
   - Silero: 15.0 → 8.5 µs;
   - FireRed: 34.0 → 27.2 µs;
   - smart-turn is compute-bound: 34.7 → 34.9 ms.
-- Q8_0 mainly saves size and memory. The int8 → float conversion costs more than the bandwidth it saves at these sizes.
+- Q8_0 runs with int8 activations where the CPU has int8 dot products (below): on AVX-512 VNNI, Silero 12.9 → 6.8 µs, FireRed 28.0 → 16.0 µs. Without them, the int8 → float conversion costs about what the bandwidth saves.
 
 ### Reduced-precision arithmetic
 
@@ -180,19 +180,20 @@ Like ggml, vad.cpp trades exactness for speed where the hardware offers it:
 - **F16 and Q8_0 weights:** on CPUs with ARMv8.2 fp16 and dot-product instructions (detected at runtime; e.g. Cortex-A55/A76/A78 and later):
   - F16 weights run with activations rounded to fp16. Products are summed in fp16 over short blocks, then accumulated in F32. Blocks that overflow are recomputed exactly.
   - Q8_0 weights run with activations quantized to int8 per 32-element block (as in ggml's Q8_0 × Q8_0), multiplied with `SDOT`.
+  - On x86 CPUs with AVX-512 VNNI (detected at runtime; e.g. AMD Zen 4/5, Intel Ice Lake and later), Q8_0 weights run the same way with `VPDPBUSD`.
   - Elsewhere they run with F32 activations.
 
-Effect on Cortex-A78, against the same model's F32 file (67.8 s and 11 s samples):
+Effect against the same model's F32 file (67.8 s and 11 s samples; ARMv8.2 on a Cortex-A78, VNNI on Zen 5):
 
-| file | max / mean deviation, F32 activations | max / mean deviation, ARMv8.2 path | frames flipping at 0.5 |
-|---|---|---|---|
-| silero-v6.2 F16 | 4.9e-3 / 6.7e-5 | 1.7e-2 / 2.5e-4 | 0 / 0 |
-| firered-stream F16 | 3.0e-3 / 8.2e-5 | 7.6e-3 / 1.6e-4 | 0 / 0 |
-| firered-vad F16 | 1.8e-3 / 2.7e-5 | 3.3e-3 / 7.8e-5 | 1 / 1 of 6778 |
-| smart-turn-v3.2 F16 | 2.1e-3 / 2.9e-4 | 5.7e-3 / 6.6e-4 | 0 / 1 of 159 (0.498 → 0.501) |
-| silero-v6.2 Q8_0 | 0.29 / 4.2e-3 | 0.33 / 5.4e-3 | 3 / 6 of 2119 |
-| firered-stream Q8_0 | 2.3e-2 / 1.0e-3 | 2.7e-2 / 1.1e-3 | 0 / 0 |
-| smart-turn-v3.2 Q8_0 | 5.0e-2 / 6.0e-3 | 8.0e-2 / 9.0e-3 | 2 / 2 of 136 |
+| file | max / mean deviation, F32 activations | max / mean deviation, ARMv8.2 path | max / mean deviation, x86 VNNI | frames flipping at 0.5 (F32 act. / ARMv8.2 / VNNI) |
+|---|---|---|---|---|
+| silero-v6.2 F16 | 4.9e-3 / 6.7e-5 | 1.7e-2 / 2.5e-4 | – | 0 / 0 |
+| firered-stream F16 | 3.0e-3 / 8.2e-5 | 7.6e-3 / 1.6e-4 | – | 0 / 0 |
+| firered-vad F16 | 1.8e-3 / 2.7e-5 | 3.3e-3 / 7.8e-5 | – | 1 / 1 of 6778 |
+| smart-turn-v3.2 F16 | 2.1e-3 / 2.9e-4 | 5.7e-3 / 6.6e-4 | – | 0 / 1 of 159 (0.498 → 0.501) |
+| silero-v6.2 Q8_0 | 0.29 / 4.2e-3 | 0.33 / 5.4e-3 | 0.33 / 6.0e-3 | 3 / 6 of 2119 / 10 of 2463 |
+| firered-stream Q8_0 | 2.3e-2 / 1.0e-3 | 2.7e-2 / 1.1e-3 | 2.6e-2 / 1.2e-3 | 0 / 0 / 0 |
+| smart-turn-v3.2 Q8_0 | 5.0e-2 / 6.0e-3 | 8.0e-2 / 9.0e-3 | 8.7e-2 / 8.5e-3 | 2 / 2 of 136 / 2 of 159 |
 
 ## Performance
 

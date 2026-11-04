@@ -38,7 +38,7 @@ struct table {
     void (*unary)(UOp op, const float * x, float * y, int n);
     // y = a op b, b a full row (bn == n) or a broadcast scalar (bn == 1)
     void (*binary)(BOp op, const float * a, const float * b, int bn, float * y, int n);
-    // Opt-in reduced precision (null where unsupported; ARMv8.2 fp16 + dotprod):
+    // Reduced precision (null where unsupported; ARMv8.2 fp16 + dotprod, x86 AVX-512 VNNI for Q8_0):
     // like gemm_f16 with activations rounded to fp16 and summed in fp16 over short blocks
     // (outputs that overflow are recomputed exactly). Needs the weights both in the file
     // layout W[n][k] (row stride ldr; used for one row of X) and packed WT [K][ldw].
@@ -49,12 +49,15 @@ struct table {
     // and packed k-interleaved W4[k / 4][ldw][4] + scales WS (see pack_q8_interleaved)
     void (*gemm_q8_lp)(const float * X, int64_t ldx, int M, const uint8_t * W, int64_t ldr, const int8_t * W4, const float * WS,
                        int64_t ldw, int K, int N, const float * bias, bool relu, float * Y, int64_t ldy);
+    // W4 for gemm_q8_lp holds w ^ 0x80 (x86 VNNI: the weights are the unsigned operand)
+    bool q8_lp_unsigned;
 };
 
-// [K][ldw] int8 -> k-interleaved [K / 4][ldw][4] (K % 4 == 0) for gemm_q8_lp
-inline void pack_q8_interleaved(const int8_t * src, int64_t K, int64_t ldw, int8_t * dst) {
+// [K][ldw] int8 -> k-interleaved [K / 4][ldw][4] (K % 4 == 0) for gemm_q8_lp; flip: store w ^ 0x80
+inline void pack_q8_interleaved(const int8_t * src, int64_t K, int64_t ldw, int8_t * dst, bool flip = false) {
     for (int64_t k = 0; k < K; ++k)
-        for (int64_t n = 0; n < ldw; ++n) dst[((k / 4) * ldw + n) * 4 + k % 4] = src[k * ldw + n];
+        for (int64_t n = 0; n < ldw; ++n)
+            dst[((k / 4) * ldw + n) * 4 + k % 4] = flip ? (int8_t) ((uint8_t) src[k * ldw + n] ^ 0x80) : src[k * ldw + n];
 }
 
 const table & get();   // best variant for this CPU

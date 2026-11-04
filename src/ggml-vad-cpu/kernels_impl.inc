@@ -873,15 +873,108 @@ static void gemm_q8_lp(const float * X, int64_t ldx, int M, const uint8_t * W, i
 }
 #endif
 
+// x86 AVX-512 VNNI: gemm_q8_lp with activations quantized per 32-block to int8 and
+// VPDPBUSD (u8 x s8 -> s32). The weights are the unsigned operand: W4 holds w ^ 0x80
+// (= w + 128), so each block sum is corrected by 128 * sum(x block).
+#if defined(__AVX512VNNI__) && defined(__AVX512BW__) && defined(__AVX512F__)
+#define VADK_HAS_LP_Q8_VNNI 1
+
+// X row quantized per 32-block: xq int8, xd = max|x| / 127, xs = 128 * sum(xq)
+static inline void vnni_quant_row(const float * x, int K, int8_t * q, float * d, int32_t * xs) {
+    for (int b = 0; b < K / 32; ++b) {
+        const __m512 a0 = _mm512_loadu_ps(x + 32 * b), a1 = _mm512_loadu_ps(x + 32 * b + 16);
+        const float amax = _mm512_reduce_max_ps(_mm512_max_ps(_mm512_abs_ps(a0), _mm512_abs_ps(a1)));
+        const float dd = amax / 127.0f, id = dd > 0 ? 1.0f / dd : 0.0f;
+        d[b] = dd;
+        const __m512i i0 = _mm512_cvtps_epi32(_mm512_mul_ps(a0, _mm512_set1_ps(id)));   // round to nearest even
+        const __m512i i1 = _mm512_cvtps_epi32(_mm512_mul_ps(a1, _mm512_set1_ps(id)));
+        _mm_storeu_si128((__m128i *) (q + 32 * b), _mm512_cvtsepi32_epi8(i0));
+        _mm_storeu_si128((__m128i *) (q + 32 * b + 16), _mm512_cvtsepi32_epi8(i1));
+        int32_t sum = 0;
+        for (int i = 0; i < 32; ++i) sum += q[32 * b + i];
+        xs[b] = 128 * sum;
+    }
+}
+
+template <int MB, int NV>   // NV vectors of 16 columns
+static inline void vnni_tile_q8(const int8_t * __restrict XQ, const float * __restrict XD, const int32_t * __restrict XS, int KB,
+                                const int8_t * __restrict W4, const float * __restrict WS, int64_t ldw,
+                                const float * __restrict bias, bool relu, float * __restrict Y, int64_t ldy, int n_valid) {
+    __m512 acc[MB][NV];
+    for (int m = 0; m < MB; ++m)
+        for (int j = 0; j < NV; ++j) acc[m][j] = _mm512_setzero_ps();
+    for (int b = 0; b < KB; ++b) {
+        __m512i s[MB][NV];
+        for (int m = 0; m < MB; ++m)
+            for (int j = 0; j < NV; ++j) s[m][j] = _mm512_set1_epi32(-XS[m * KB + b]);   // start at -128 sum(x)
+        for (int g = 0; g < 8; ++g) {   // 4 k per group
+            const int8_t * wg = W4 + ((int64_t) (b * 8 + g) * ldw) * 4;
+            __m512i w[NV];
+            for (int j = 0; j < NV; ++j) w[j] = _mm512_loadu_si512((const void *) (wg + 64 * j));
+            for (int m = 0; m < MB; ++m) {
+                int32_t xi;
+                std::memcpy(&xi, XQ + m * KB * 32 + b * 32 + g * 4, 4);
+                const __m512i xv = _mm512_set1_epi32(xi);
+                for (int j = 0; j < NV; ++j) s[m][j] = _mm512_dpbusd_epi32(s[m][j], w[j], xv);
+            }
+        }
+        const float * sc = WS + (int64_t) b * ldw;
+        for (int j = 0; j < NV; ++j) {
+            const __m512 s16 = _mm512_loadu_ps(sc + 16 * j);
+            for (int m = 0; m < MB; ++m)
+                acc[m][j] = _mm512_fmadd_ps(_mm512_cvtepi32_ps(s[m][j]), _mm512_mul_ps(s16, _mm512_set1_ps(XD[m * KB + b])), acc[m][j]);
+        }
+    }
+    for (int m = 0; m < MB; ++m) {
+        alignas(64) float a[16 * NV];
+        for (int j = 0; j < NV; ++j) _mm512_store_ps(a + 16 * j, acc[m][j]);
+        float * y = Y + m * ldy;
+        for (int j = 0; j < n_valid; ++j) {
+            float v = a[j] + (bias ? bias[j] : 0.0f);
+            y[j] = relu ? (v > 0 ? v : 0) : v;
+        }
+    }
+}
+
+template <int MB>
+static inline void vnni_rows_q8(const int8_t * XQ, const float * XD, const int32_t * XS, int KB, const int8_t * W4, const float * WS,
+                                int64_t ldw, int N, const float * bias, bool relu, float * Y, int64_t ldy) {
+    for (int n0 = 0; n0 < N; n0 += 32)   // packed columns are zero padded to ldw (a multiple of 32)
+        vnni_tile_q8<MB, 2>(XQ, XD, XS, KB, W4 + 4 * n0, WS + n0, ldw, bias ? bias + n0 : nullptr, relu, Y + n0, ldy,
+                            N - n0 < 32 ? N - n0 : 32);
+}
+
+static void gemm_q8_lp(const float * X, int64_t ldx, int M, const uint8_t *, int64_t, const int8_t * W4, const float * WS,
+                       int64_t ldw, int K, int N, const float * bias, bool relu, float * Y, int64_t ldy) {
+    constexpr int RB = 4;
+    static thread_local std::vector<int8_t> xq;
+    static thread_local std::vector<float> xd;
+    static thread_local std::vector<int32_t> xs;
+    const int KB = K / 32;
+    if (xq.size() < (size_t) RB * K) { xq.resize((size_t) RB * K); xd.resize((size_t) RB * KB + 1); xs.resize((size_t) RB * KB + 1); }
+    for (int m = 0; m < M; m += RB) {
+        const int mr = M - m < RB ? M - m : RB;
+        for (int r = 0; r < mr; ++r) vnni_quant_row(X + (int64_t) (m + r) * ldx, K, xq.data() + r * K, xd.data() + r * KB, xs.data() + r * KB);
+        float * Ym = Y + (int64_t) m * ldy;
+        if (mr == 4)      vnni_rows_q8<4>(xq.data(), xd.data(), xs.data(), KB, W4, WS, ldw, N, bias, relu, Ym, ldy);
+        else if (mr == 3) vnni_rows_q8<3>(xq.data(), xd.data(), xs.data(), KB, W4, WS, ldw, N, bias, relu, Ym, ldy);
+        else if (mr == 2) vnni_rows_q8<2>(xq.data(), xd.data(), xs.data(), KB, W4, WS, ldw, N, bias, relu, Ym, ldy);
+        else              vnni_rows_q8<1>(xq.data(), xd.data(), xs.data(), KB, W4, WS, ldw, N, bias, relu, Ym, ldy);
+    }
+}
+#endif
+
 #ifdef VADK_HAS_GEMM_BIG
 #define VADK_BIG gemm_big, 16
 #else
 #define VADK_BIG nullptr, 0
 #endif
-#ifdef VADK_HAS_LP
-#define VADK_LP gemm_f16_lp, gemm_q8_lp
+#if defined(VADK_HAS_LP)
+#define VADK_LP gemm_f16_lp, gemm_q8_lp, false
+#elif defined(VADK_HAS_LP_Q8_VNNI)
+#define VADK_LP nullptr, gemm_q8_lp, true
 #else
-#define VADK_LP nullptr, nullptr
+#define VADK_LP nullptr, nullptr, false
 #endif
 extern const vadk::table table = { VADK_NAME, gemm, gemm_f16, gemm_q8, VADK_BIG, unary, binary, VADK_LP };
 

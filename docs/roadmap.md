@@ -26,6 +26,7 @@ Done: [nvidia/Nemotron-3-Diarization](https://huggingface.co/nvidia/Nemotron-3-D
   - The thread pool has per-thread task ranges, work stealing and per-task completion.
   - SSM_CONV, FSMN, ROPE and softmax with masks run natively.
   - Unary math is vectorized.
+  - Q8_0 with int8 activations on AVX-512 VNNI (`avx512-vnni` variant): about 2× faster than before and faster than F32.
 - **ARM.**
   - Done: an ARMv8.2 (fp16 + dotprod) variant chosen at runtime, NEON register tiles, streaming one-row F32 GEMV, and per-ISA thread-pool tuning (timed spin; few-row GEMMs split only when the work pays for the dispatch, 2 chunks per thread for big.LITTLE).
   - `vad-cpu` beats ggml-cpu on the Genio board and the Pixel in nearly every cell (`bench/results/arm_genio.txt`), typically 1.2–3× and far more for multi-threaded streaming.
@@ -35,6 +36,6 @@ Done: [nvidia/Nemotron-3-Diarization](https://huggingface.co/nvidia/Nemotron-3-D
   - To do:
     - SVE variants.
 - **Stream vs offline.** FireRed differs by 1.8e-7 between streaming (or batched streams) and offline on `vad-cpu`, even for F32 files, on x86 and aarch64 (ggml-cpu is exact). Within tolerance; the cause is not located yet.
-- **int8 dot product (VNNI) for Q8_0 files on x86.** On x86 the Q8_0 path is still weight-only (int8 → F32 per element), so it is slower than F32. ARM already uses int8 activations with `SDOT`.
+- **AVX-VNNI (VEX) for Q8_0 on AVX2-only x86** (e.g. Alder Lake): the AVX-512 VNNI variant is done; CPUs without AVX-512 still convert int8 weights to F32.
 - Fuse the LSTM cell for Silero's multi-chunk graphs.
 - Batch sliding-window streams across streams in `vad_streams_push`.

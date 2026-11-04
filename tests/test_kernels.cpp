@@ -136,8 +136,8 @@ int main() {
             for (float v : Yr) mag = std::max(mag, std::fabs(v));
             CHECK(worst <= 1e-5f * (1 + mag), "%s gemm_q8 M=%d N=%d K=%d differs by %.3g", k.name, M, N, K, worst);
         }
-        // opt-in reduced precision: close to the exact kernels; overflowing fp16 blocks fall back
-        if (k.gemm_f16_lp) {
+        // reduced precision: close to the exact kernels; overflowing fp16 blocks fall back
+        if (k.gemm_f16_lp || k.gemm_q8_lp) {
             for (int M : {1, 2, 3, 4, 7, 33}) for (int N : {31, 64, 100, 513}) for (int K : {64, 387, 544}) {
                 const int ldx = K + 3, ldy = N + 5, ldw = (N + 31) / 32 * 32;
                 std::vector<float> X((size_t) M * ldx), Y((size_t) M * ldy), Yr((size_t) M * ldy), S((size_t) (K / 32 + 1) * ldw), bias(N);
@@ -160,11 +160,13 @@ int main() {
                 };
                 std::vector<uint16_t> Wr((size_t) N * (K + 2));   // file layout [N][K], padded rows
                 for (int kk = 0; kk < K; ++kk) for (int n = 0; n < N; ++n) Wr[(size_t) n * (K + 2) + kk] = Wh[(size_t) kk * ldw + n];
-                k.gemm_f16(X.data(), ldx, M, Wh.data(), ldw, K, N, bias.data(), false, Yr.data(), ldy);
-                k.gemm_f16_lp(X.data(), ldx, M, Wr.data(), K + 2, Wh.data(), ldw, K, N, bias.data(), false, Y.data(), ldy);
-                err("gemm_f16_lp");
-                if (K % 32) continue;
-                vadk::pack_q8_interleaved(Q.data(), K, ldw, Q4.data());
+                if (k.gemm_f16_lp) {
+                    k.gemm_f16(X.data(), ldx, M, Wh.data(), ldw, K, N, bias.data(), false, Yr.data(), ldy);
+                    k.gemm_f16_lp(X.data(), ldx, M, Wr.data(), K + 2, Wh.data(), ldw, K, N, bias.data(), false, Y.data(), ldy);
+                    err("gemm_f16_lp");
+                }
+                if (K % 32 || !k.gemm_q8_lp) continue;
+                vadk::pack_q8_interleaved(Q.data(), K, ldw, Q4.data(), k.q8_lp_unsigned);
                 const int64_t ldr = (K / 32) * 34 + 6;   // file layout: block_q8_0 rows {fp16 d, int8 qs[32]}, padded
                 std::vector<uint8_t> Qr((size_t) N * ldr, 0);
                 for (int n = 0; n < N; ++n) for (int b = 0; b < K / 32; ++b) {
