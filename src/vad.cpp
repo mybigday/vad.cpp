@@ -783,8 +783,27 @@ int vad_streams_push(vad_stream ** streams, int n, const float * const * samples
         if (ready > 0) { jobs.emplace_back(); window_prepare(s, ready, probs[i], jobs.back()); }
     }
     if (!jobs.empty() && !window_run_all(m, jobs)) return -1;
+    // host-driven streams: the model may batch their graph work across streams
+    {
+        std::vector<session *> hs;
+        std::vector<const float *> hx;
+        std::vector<int64_t> hl;
+        std::vector<float *> ho;
+        for (int i : other) {
+            vad_stream * s = streams[i];
+            if (s->kind != stream_kind::HOST) continue;
+            const int k = vad_stream_n_pending(s, n_samples[i]);
+            if (k > max_probs[i]) return -1;
+            n_out[i] = k;
+            hs.push_back(s->sess.get()); hx.push_back(samples[i]); hl.push_back(n_samples[i]); ho.push_back(probs[i]);
+        }
+        if (!hs.empty()) {
+            model_runner r(m);
+            if (!m->a->streams_push(r, hs.data(), (int) hs.size(), hx.data(), hl.data(), ho.data())) return -1;
+        }
+    }
     for (int i : other) {
-        if (streams[i]->kind == stream_kind::WINDOW) continue;
+        if (streams[i]->kind == stream_kind::WINDOW || streams[i]->kind == stream_kind::HOST) continue;
         const int r = vad_stream_push(streams[i], samples[i], n_samples[i], probs[i], max_probs[i]);
         if (r < 0) return -1;
         n_out[i] = r;

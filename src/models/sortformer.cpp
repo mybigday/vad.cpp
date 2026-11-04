@@ -173,21 +173,21 @@ public:
     // Embeddings of Fe encoder frames: audio = preemphasized samples starting
     // NFFT/2 before the first mel frame, (SUB*Fe - 1)*HOP + NFFT long;
     // mask = 1 for mel frames inside the audio. Output [D, Fe].
-    custom_graph embed_graph(ggml_context * c, ggml_cgraph * gf, const graph_opts & o, int Fe) const {
+    custom_graph embed_graph(ggml_context * c, ggml_cgraph * gf, const graph_opts & o, int Fe, int B = 1) const {
         custom_graph g;
         const int64_t NF = (int64_t) SUB_ * Fe;
-        ggml_tensor * audio = ggml_new_tensor_1d(c, GGML_TYPE_F32, (NF - 1) * HOP + NFFT);
-        ggml_tensor * mask = ggml_new_tensor_2d(c, GGML_TYPE_F32, 1, NF);
+        ggml_tensor * audio = ggml_new_tensor_2d(c, GGML_TYPE_F32, (NF - 1) * HOP + NFFT, B);
+        ggml_tensor * mask = ggml_new_tensor_3d(c, GGML_TYPE_F32, 1, NF, B);
         ggml_set_input(audio); ggml_set_input(mask);
-        ggml_tensor * frames = sliding_windows(c, audio, NFFT, NF, HOP, 1, ggml_nbytes(audio), o);   // [512, NF, 1]
+        ggml_tensor * frames = sliding_windows(c, audio, NFFT, NF, HOP, B, audio->nb[1], o);   // [512, NF, B]
         ggml_tensor * spec = mm(c, basis_, frames, o, true);
-        ggml_tensor * re = ggml_view_2d(c, spec, NBIN, NF, spec->nb[1], 0);
-        ggml_tensor * im = ggml_view_2d(c, spec, NBIN, NF, spec->nb[1], NBIN * sizeof(float));
+        ggml_tensor * re = ggml_view_3d(c, spec, NBIN, NF, B, spec->nb[1], spec->nb[2], 0);
+        ggml_tensor * im = ggml_view_3d(c, spec, NBIN, NF, B, spec->nb[1], spec->nb[2], NBIN * sizeof(float));
         ggml_tensor * pw = ggml_add(c, ggml_mul(c, re, re), ggml_mul(c, im, im));
-        ggml_tensor * mel = mm(c, fb_, pw, o, true);                                            // [128, NF]
+        ggml_tensor * mel = mm(c, fb_, pw, o, true);                                            // [128, NF, B]
         ggml_tensor * lm = ggml_mul(c, ggml_log(c, ggml_scale_bias(c, mel, 1.0f, (float) guard_)), mask);
-        ggml_tensor * stacked = ggml_reshape_2d(c, lm, feat_ * SUB_, Fe);                      // 8 frames per row
-        ggml_tensor * emb = mm(c, proj_in_, stacked, o, true);                                  // [D, Fe]
+        ggml_tensor * stacked = ggml_reshape_3d(c, lm, feat_ * SUB_, Fe, B);                   // 8 frames per row
+        ggml_tensor * emb = mm(c, proj_in_, stacked, o, true);                                  // [D, Fe, B]
         ggml_set_output(emb);
         ggml_build_forward_expand(gf, emb);
         g.inputs = { audio, mask };
@@ -195,37 +195,39 @@ public:
         return g;
     }
 
-    // Encoder + head over S (<= Sb) embeddings: emb [D, Sb]; kq_mask [Sb, Sb] F16
-    // (0 / -inf per key); seq_mask [1, Sb] (1 inside the sequence); pos [Sb].
-    // Output: speaker probabilities [NS, SUB * Sb].
-    custom_graph encoder_graph(ggml_context * c, ggml_cgraph * gf, const graph_opts & o, int Sb) const {
+    // Encoder + head over B sequences of S (<= Sb) embeddings each: emb [D, Sb, B];
+    // kq_mask [Sb, Sb, 1, B] F16 (0 / -inf per key); seq_mask [1, Sb, B] (1 inside the
+    // sequence); pos [Sb]. Output: speaker probabilities [NS, SUB * Sb, B].
+    custom_graph encoder_graph(ggml_context * c, ggml_cgraph * gf, const graph_opts & o, int Sb, int B = 1) const {
         custom_graph g;
         const int64_t D = D_, HD = D_ / NH_, NH = NH_;
-        ggml_tensor * emb = ggml_new_tensor_2d(c, GGML_TYPE_F32, D, Sb);
-        ggml_tensor * kq_mask = ggml_new_tensor_2d(c, GGML_TYPE_F16, Sb, Sb);
-        ggml_tensor * seq_mask = ggml_new_tensor_2d(c, GGML_TYPE_F32, 1, Sb);
+        ggml_tensor * emb = ggml_new_tensor_3d(c, GGML_TYPE_F32, D, Sb, B);
+        ggml_tensor * kq_mask = ggml_new_tensor_4d(c, GGML_TYPE_F16, Sb, Sb, 1, B);
+        ggml_tensor * seq_mask = ggml_new_tensor_3d(c, GGML_TYPE_F32, 1, Sb, B);
         ggml_tensor * pos = ggml_new_tensor_1d(c, GGML_TYPE_I32, Sb);
         for (ggml_tensor * t : { emb, kq_mask, seq_mask, pos }) ggml_set_input(t);
 
         ggml_tensor * x = ln(c, emb, in_w_, in_b_);
         for (const layer & L : layers_) {
             ggml_tensor * h = ln(c, x, L.n1w, L.n1b);
-            ggml_tensor * qkv = mm(c, L.qkv, h, o);                                             // [3D, Sb]
-            auto head = [&](int i) { return ggml_view_3d(c, qkv, HD, NH, Sb, HD * sizeof(float), qkv->nb[1], i * D * sizeof(float)); };
+            ggml_tensor * qkv = mm(c, L.qkv, h, o);                                             // [3D, Sb, B]
+            auto head = [&](int i) {
+                return ggml_view_4d(c, qkv, HD, NH, Sb, B, HD * sizeof(float), qkv->nb[1], qkv->nb[2], i * D * sizeof(float));
+            };
             ggml_tensor * q = head(0), * k = head(1), * v = head(2);
             if (!o.host) { q = ggml_cont(c, q); k = ggml_cont(c, k); }
             q = ggml_rope_ext(c, q, pos, nullptr, (int) HD, GGML_ROPE_TYPE_NEOX, 0, (float) rope_base_, 1.0f, 0.0f, 1.0f, 0.0f, 0.0f);
             k = ggml_rope_ext(c, k, pos, nullptr, (int) HD, GGML_ROPE_TYPE_NEOX, 0, (float) rope_base_, 1.0f, 0.0f, 1.0f, 0.0f, 0.0f);
-            q = ggml_permute(c, q, 0, 2, 1, 3);                                                 // [HD, Sb, NH]
+            q = ggml_permute(c, q, 0, 2, 1, 3);                                                 // [HD, Sb, NH, B]
             k = ggml_permute(c, k, 0, 2, 1, 3);
             if (!o.host) { q = ggml_cont(c, q); k = ggml_cont(c, k); }
-            ggml_tensor * kq = ggml_mul_mat(c, k, q);                                           // [Sb(k), Sb(q), NH]
+            ggml_tensor * kq = ggml_mul_mat(c, k, q);                                           // [Sb(k), Sb(q), NH, B]
             ggml_prec_set_acc(kq, GGML_PREC_F32);
             kq = ggml_soft_max_ext(c, kq, kq_mask, 1.0f / std::sqrt((float) HD), 0.0f);
-            ggml_tensor * vt = ggml_cont(c, ggml_permute(c, v, 1, 2, 0, 3));                    // [Sb, HD, NH]
-            ggml_tensor * a = ggml_mul_mat(c, vt, kq);                                          // [HD, Sb(q), NH]
+            ggml_tensor * vt = ggml_cont(c, ggml_permute(c, v, 1, 2, 0, 3));                    // [Sb, HD, NH, B]
+            ggml_tensor * a = ggml_mul_mat(c, vt, kq);                                          // [HD, Sb(q), NH, B]
             ggml_prec_set_acc(a, GGML_PREC_F32);
-            a = ggml_reshape_2d(c, ggml_cont(c, ggml_permute(c, a, 0, 2, 1, 3)), D, Sb);       // [D, Sb]
+            a = ggml_reshape_3d(c, ggml_cont(c, ggml_permute(c, a, 0, 2, 1, 3)), D, Sb, B);    // [D, Sb, B]
             x = ggml_add(c, x, ggml_add(c, mm(c, L.ow, a, o), L.ob));
             h = ln(c, x, L.n2w, L.n2b);
             h = ggml_gelu_erf(c, ggml_add(c, mm(c, L.w1, h, o), L.b1));
@@ -233,14 +235,14 @@ public:
         }
         x = ln(c, x, out_w_, out_b_);
         // frames past the sequence (bucket padding) must read as the conv's zero padding
-        ggml_tensor * y = ggml_mul(c, ggml_add(c, mm(c, proj_w_, x, o), proj_b_), seq_mask);   // [H, Sb]
-        ggml_tensor * yp = ggml_pad_ext(c, y, 0, 0, 1, 1, 0, 0, 0, 0);                         // [H, Sb + 2]
-        ggml_tensor * col = sliding_windows(c, yp, 3 * H_, Sb, H_, 1, ggml_nbytes(yp), o);     // [3H, Sb]
-        ggml_tensor * u = ggml_add(c, mm(c, up_w_, col, o), up_b_);                             // [H * SUB, Sb]
-        u = ggml_reshape_2d(c, u, H_, (int64_t) SUB_ * Sb);                                    // sub-pixel shuffle
+        ggml_tensor * y = ggml_mul(c, ggml_add(c, mm(c, proj_w_, x, o), proj_b_), seq_mask);   // [H, Sb, B]
+        ggml_tensor * yp = ggml_pad_ext(c, y, 0, 0, 1, 1, 0, 0, 0, 0);                         // [H, Sb + 2, B]
+        ggml_tensor * col = sliding_windows(c, yp, 3 * H_, Sb, H_, B, yp->nb[2], o);           // [3H, Sb, B]
+        ggml_tensor * u = ggml_add(c, mm(c, up_w_, col, o), up_b_);                             // [H * SUB, Sb, B]
+        u = ggml_reshape_3d(c, u, H_, (int64_t) SUB_ * Sb, B);                                 // sub-pixel shuffle
         u = ggml_add(c, mm(c, h1_w_, ggml_relu(c, u), o), h1_b_);
         u = ggml_add(c, mm(c, h2_w_, ggml_relu(c, u), o), h2_b_);
-        ggml_tensor * p = ggml_sigmoid(c, u);                                                   // [NS, SUB * Sb]
+        ggml_tensor * p = ggml_sigmoid(c, u);                                                   // [NS, SUB * Sb, B]
         ggml_set_output(p);
         ggml_build_forward_expand(gf, p);
         g.inputs = { emb, kq_mask, seq_mask, pos };
@@ -251,6 +253,8 @@ public:
     size_t encoder_nodes() const { return 64 + (size_t) L_ * 48; }
 
     std::unique_ptr<session> new_session(int slice_samples, int lookahead_samples, bool offline, std::string & err) const override;
+    bool streams_push(graph_runner & g, session * const * s, int n, const float * const * x, const int64_t * len,
+                      float * const * out) const override;
 
     int SUB_ = 8;
     int64_t D_ = 0, L_ = 0, NH_ = 0, FF_ = 0, H_ = 0, NS_ = 0, feat_ = 0;
@@ -302,6 +306,17 @@ public:
     int64_t n_buffered() const override { return total_ - std::min<int64_t>(total_, (int64_t) emitted_ * E_); }
 
     bool push(graph_runner & g, const float * x, int64_t n, float * out) override {
+        const int64_t steps = append(x, n);
+        const int64_t valid = total_ / HOP;   // never reached by non-final steps
+        for (int64_t s = 0; s < steps; ++s) {
+            if (!step(g, chunk_, rc_, valid, out)) return false;
+            out += (size_t) chunk_ * m_.SUB_ * NS_;
+        }
+        return true;
+    }
+
+    // adds samples; returns the streaming steps they complete
+    int64_t append(const float * x, int64_t n) {
         const int64_t steps = steps_ready(total_ + n);
         pre_.reserve(pre_.size() + n);
         for (int64_t i = 0; i < n; ++i) {
@@ -310,12 +325,7 @@ public:
         }
         if (n > 0) last_ = x[n - 1];
         total_ += n;
-        const int64_t valid = total_ / HOP;   // never reached by non-final steps
-        for (int64_t s = 0; s < steps; ++s) {
-            if (!step(g, chunk_, rc_, valid, out)) return false;
-            out += (size_t) chunk_ * m_.SUB_ * NS_;
-        }
-        return true;
+        return steps;
     }
 
     bool flush(graph_runner & g, float * out) override {
@@ -349,72 +359,179 @@ public:
 private:
     // embeddings [emb0_, upto) are kept in emb_; computes the missing ones
     bool ensure_embeds(graph_runner & g, int64_t upto, int64_t valid) {
-        while (emb0_ + (int64_t) emb_.size() / D_ < upto) {
-            const int64_t e0 = emb0_ + (int64_t) emb_.size() / D_;
-            const int want = (int) std::min<int64_t>(512, upto - e0);
-            int Fe = 16;
-            while (Fe < want) Fe *= 2;
-            const int64_t NF = (int64_t) m_.SUB_ * Fe;
-            std::vector<float> audio((size_t) ((NF - 1) * HOP + NFFT), 0.0f), mask((size_t) NF, 0.0f);
-            const int64_t a0 = e0 * E_ - NFFT / 2;
-            for (size_t i = 0; i < audio.size(); ++i) {
-                const int64_t s = a0 + (int64_t) i;
-                if (s >= 0 && s < total_) audio[i] = pre_[(size_t) (s - pre0_)];
-            }
-            for (int64_t k = 0; k < NF; ++k) mask[(size_t) k] = e0 * m_.SUB_ + k < valid ? 1.0f : 0.0f;
-            std::vector<float> e((size_t) D_ * Fe);
-            const sortformer & m = m_;
-            if (!g.run("sortformer.embed." + std::to_string(Fe), 256,
-                       [&m, Fe](ggml_context * c, ggml_cgraph * gf, const graph_opts & o) { return m.embed_graph(c, gf, o, Fe); },
-                       { audio.data(), mask.data() }, { e.data() })) return false;
-            emb_.insert(emb_.end(), e.begin(), e.begin() + (size_t) D_ * want);
+        embed_job j;
+        while (next_embed(upto, valid, j)) {
+            embed_job * p = &j;
+            if (!run_embeds(g, m_, &p, 1)) return false;
         }
         return true;
     }
 
+public:
+    // the input of the next embedding run towards `upto` embeddings (false: none missing)
+    struct embed_job {
+        sortformer_session * s = nullptr;
+        int want = 0, Fe = 0;
+        std::vector<float> audio, mask;
+    };
+
+    bool next_embed(int64_t upto, int64_t valid, embed_job & j) {
+        const int64_t e0 = emb0_ + (int64_t) emb_.size() / D_;
+        if (e0 >= upto) return false;
+        j.s = this;
+        j.want = (int) std::min<int64_t>(512, upto - e0);
+        j.Fe = 16;
+        while (j.Fe < j.want) j.Fe *= 2;
+        const int64_t NF = (int64_t) m_.SUB_ * j.Fe;
+        j.audio.assign((size_t) ((NF - 1) * HOP + NFFT), 0.0f);
+        j.mask.assign((size_t) NF, 0.0f);
+        const int64_t a0 = e0 * E_ - NFFT / 2;
+        for (size_t i = 0; i < j.audio.size(); ++i) {
+            const int64_t s = a0 + (int64_t) i;
+            if (s >= 0 && s < total_) j.audio[i] = pre_[(size_t) (s - pre0_)];
+        }
+        for (int64_t k = 0; k < NF; ++k) j.mask[(size_t) k] = e0 * m_.SUB_ + k < valid ? 1.0f : 0.0f;
+        return true;
+    }
+
+    // embedding runs of several sessions, batched by Fe (B = power of two >= their count)
+    static bool run_embeds(graph_runner & g, const sortformer & m, embed_job * const * jobs, int n) {
+        std::vector<int> order(n);
+        std::iota(order.begin(), order.end(), 0);
+        std::stable_sort(order.begin(), order.end(), [&](int a, int b) { return jobs[a]->Fe < jobs[b]->Fe; });
+        for (int g0 = 0; g0 < n;) {
+            int g1 = g0;
+            const int Fe = jobs[order[g0]]->Fe;
+            while (g1 < n && jobs[order[g1]]->Fe == Fe) ++g1;
+            const int cnt = g1 - g0;
+            int B = 1;
+            while (B < cnt) B *= 2;
+            const size_t na = jobs[order[g0]]->audio.size(), nm = jobs[order[g0]]->mask.size();
+            std::vector<float> audio(na * B, 0.0f), mask(nm * B, 0.0f), e((size_t) m.D_ * Fe * B);
+            for (int b = 0; b < cnt; ++b) {
+                const embed_job & j = *jobs[order[g0 + b]];
+                std::copy(j.audio.begin(), j.audio.end(), audio.begin() + (size_t) b * na);
+                std::copy(j.mask.begin(), j.mask.end(), mask.begin() + (size_t) b * nm);
+            }
+            if (!g.run("sortformer.embed." + std::to_string(Fe) + "." + std::to_string(B), 256,
+                       [&m, Fe, B](ggml_context * c, ggml_cgraph * gf, const graph_opts & o) { return m.embed_graph(c, gf, o, Fe, B); },
+                       { audio.data(), mask.data() }, { e.data() })) return false;
+            for (int b = 0; b < cnt; ++b) {
+                embed_job & j = *jobs[order[g0 + b]];
+                const float * eb = e.data() + (size_t) b * m.D_ * Fe;
+                j.s->emb_.insert(j.s->emb_.end(), eb, eb + (size_t) m.D_ * j.want);
+            }
+            g0 = g1;
+        }
+        return true;
+    }
+
+    // embeddings the next streaming step needs
+    int64_t step_upto() const { return emitted_ + chunk_ + rc_; }
+
+private:
     // One step: chunk frames [emitted_, emitted_ + ch) with rc look-ahead frames.
     // Writes ch * SUB frames of NS probabilities; updates FIFO and speaker cache.
     bool step(graph_runner & g, int ch, int rc, int64_t valid, float * out) {
+        step_job j;
+        if (!prepare(g, ch, rc, valid, out, j)) return false;
+        step_job * p = &j;
+        return run_jobs(g, m_, &p, 1);
+    }
+
+public:
+    // the encoder input of one step (cache + FIFO + chunk + look-ahead, padded to Sb)
+    struct step_job {
+        sortformer_session * s = nullptr;
+        int ch = 0, nc = 0, nf = 0, S = 0, Sb = 0;
+        std::vector<float> seq, seq_mask, key;
+        std::vector<ggml_fp16_t> kq;
+        float * out = nullptr;
+    };
+
+    // streaming steps of several sessions as batched computes: jobs of the same Sb share one
+    // graph of B = power of two >= their count (padding sequences fully masked but one key)
+    static bool run_jobs(graph_runner & g, const sortformer & m, step_job * const * jobs, int n) {
+        std::vector<int> order(n);
+        std::iota(order.begin(), order.end(), 0);
+        std::stable_sort(order.begin(), order.end(), [&](int a, int b) { return jobs[a]->Sb < jobs[b]->Sb; });
+        const int64_t D = m.D_, NSO = m.NS_ * m.SUB_;
+        for (int g0 = 0; g0 < n;) {
+            int g1 = g0;
+            const int Sb = jobs[order[g0]]->Sb;
+            while (g1 < n && jobs[order[g1]]->Sb == Sb) ++g1;
+            const int cnt = g1 - g0;
+            int B = 1;
+            while (B < cnt) B *= 2;
+            std::vector<float> seq((size_t) D * Sb * B, 0.0f), seq_mask((size_t) Sb * B, 0.0f);
+            std::vector<ggml_fp16_t> kq((size_t) Sb * Sb * B, ggml_fp32_to_fp16(-INFINITY));
+            for (int b = 0; b < B; ++b) {
+                if (b < cnt) {
+                    const step_job & j = *jobs[order[g0 + b]];
+                    std::copy(j.seq.begin(), j.seq.end(), seq.begin() + (size_t) b * D * Sb);
+                    std::copy(j.seq_mask.begin(), j.seq_mask.end(), seq_mask.begin() + (size_t) b * Sb);
+                    std::copy(j.kq.begin(), j.kq.end(), kq.begin() + (size_t) b * Sb * Sb);
+                } else {
+                    for (int q = 0; q < Sb; ++q) kq[(size_t) b * Sb * Sb + (size_t) q * Sb] = ggml_fp32_to_fp16(0.0f);
+                }
+            }
+            std::vector<int32_t> pos((size_t) Sb);
+            std::iota(pos.begin(), pos.end(), 0);
+            std::vector<float> probs((size_t) NSO * Sb * B);
+            if (!g.run("sortformer.encoder." + std::to_string(Sb) + "." + std::to_string(B), m.encoder_nodes(),
+                       [&m, Sb, B](ggml_context * c, ggml_cgraph * gf, const graph_opts & o) { return m.encoder_graph(c, gf, o, Sb, B); },
+                       { seq.data(), kq.data(), seq_mask.data(), pos.data() }, { probs.data() })) return false;
+            for (int b = 0; b < cnt; ++b) {
+                step_job & j = *jobs[order[g0 + b]];
+                j.s->finish(j, probs.data() + (size_t) b * NSO * Sb);
+            }
+            g0 = g1;
+        }
+        return true;
+    }
+
+    // embeddings and encoder input of the next step (chunk ch, look-ahead rc); its output goes to out
+    bool prepare(graph_runner & g, int ch, int rc, int64_t valid, float * out, step_job & j) {
         const int64_t c0 = emitted_;
         if (!ensure_embeds(g, c0 + ch + rc, valid)) return false;
         const int nc = n_cache_, nf = n_fifo_, S = nc + nf + ch + rc;
         int Sb = 64;
         while (Sb < S) Sb += 64;
-        std::vector<float> seq((size_t) D_ * Sb, 0.0f), seq_mask((size_t) Sb, 0.0f), key((size_t) S, 1.0f);
-        std::copy(cache_emb_.begin(), cache_emb_.begin() + (size_t) nc * D_, seq.begin());
-        std::copy(fifo_emb_.begin(), fifo_emb_.begin() + (size_t) nf * D_, seq.begin() + (size_t) nc * D_);
+        j.s = this; j.ch = ch; j.nc = nc; j.nf = nf; j.S = S; j.Sb = Sb; j.out = out;
+        j.seq.assign((size_t) D_ * Sb, 0.0f);
+        j.seq_mask.assign((size_t) Sb, 0.0f);
+        j.key.assign((size_t) S, 1.0f);
+        std::copy(cache_emb_.begin(), cache_emb_.begin() + (size_t) nc * D_, j.seq.begin());
+        std::copy(fifo_emb_.begin(), fifo_emb_.begin() + (size_t) nf * D_, j.seq.begin() + (size_t) nc * D_);
         std::copy(emb_.begin() + (size_t) (c0 - emb0_) * D_, emb_.begin() + (size_t) (c0 - emb0_ + ch + rc) * D_,
-                  seq.begin() + (size_t) (nc + nf) * D_);
-        for (int i = 0; i < S; ++i) seq_mask[i] = 1.0f;
+                  j.seq.begin() + (size_t) (nc + nf) * D_);
+        for (int i = 0; i < S; ++i) j.seq_mask[i] = 1.0f;
         // an encoder frame whose first mel frame lies past the audio is masked (offline tail)
-        for (int i = 0; i < ch + rc; ++i) key[nc + nf + i] = (c0 + i) * m_.SUB_ < valid ? 1.0f : 0.0f;
-        std::vector<ggml_fp16_t> kq((size_t) Sb * Sb);
+        for (int i = 0; i < ch + rc; ++i) j.key[nc + nf + i] = (c0 + i) * m_.SUB_ < valid ? 1.0f : 0.0f;
+        j.kq.resize((size_t) Sb * Sb);
         const ggml_fp16_t zero = ggml_fp32_to_fp16(0.0f), ninf = ggml_fp32_to_fp16(-INFINITY);
         for (int k = 0; k < Sb; ++k) {
-            const ggml_fp16_t v = k < S && key[k] > 0 ? zero : ninf;
-            for (int q = 0; q < Sb; ++q) kq[(size_t) q * Sb + k] = v;
+            const ggml_fp16_t v = k < S && j.key[k] > 0 ? zero : ninf;
+            for (int q = 0; q < Sb; ++q) j.kq[(size_t) q * Sb + k] = v;
         }
-        std::vector<int32_t> pos((size_t) Sb);
-        std::iota(pos.begin(), pos.end(), 0);
-        std::vector<float> probs((size_t) NS_ * m_.SUB_ * Sb);
-        const sortformer & m = m_;
-        if (!g.run("sortformer.encoder." + std::to_string(Sb), m_.encoder_nodes(),
-                   [&m, Sb](ggml_context * c, ggml_cgraph * gf, const graph_opts & o) { return m.encoder_graph(c, gf, o, Sb); },
-                   { seq.data(), kq.data(), seq_mask.data(), pos.data() }, { probs.data() })) return false;
+        return true;
+    }
 
-        // chunk outputs
+    // probs [NS, SUB * Sb] of the step: writes the chunk's outputs, updates FIFO and speaker cache
+    void finish(step_job & j, const float * probs) {
+        const int nc = j.nc, nf = j.nf, S = j.S, ch = j.ch;
         const size_t o0 = (size_t) (nc + nf) * m_.SUB_ * NS_;
-        std::copy(probs.begin() + o0, probs.begin() + o0 + (size_t) ch * m_.SUB_ * NS_, out);
+        std::copy(probs + o0, probs + o0 + (size_t) ch * m_.SUB_ * NS_, j.out);
 
         // probabilities per encoder frame: mean of its SUB frames, zero when masked
         std::vector<float> pooled((size_t) S * NS_);
         for (int f = 0; f < S; ++f)
             for (int s = 0; s < NS_; ++s) {
                 double acc = 0;
-                for (int j = 0; j < m_.SUB_; ++j) acc += probs[((size_t) f * m_.SUB_ + j) * NS_ + s];
-                pooled[(size_t) f * NS_ + s] = (float) (acc / m_.SUB_) * key[f];
+                for (int k = 0; k < m_.SUB_; ++k) acc += probs[((size_t) f * m_.SUB_ + k) * NS_ + s];
+                pooled[(size_t) f * NS_ + s] = (float) (acc / m_.SUB_) * j.key[f];
             }
-        update(seq, pooled, nc, nf, ch);
+        update(j.seq, pooled, nc, nf, ch);
         emitted_ += ch;
         // drop what later steps no longer need
         const int64_t drop = std::min<int64_t>(emitted_ - emb0_, (int64_t) emb_.size() / D_);
@@ -426,9 +543,13 @@ private:
             pre_.erase(pre_.begin(), pre_.begin() + k);
             pre0_ += k;
         }
-        return true;
     }
 
+    int chunk() const { return chunk_; }
+    int rc() const { return rc_; }
+    int64_t valid() const { return total_ / HOP; }
+
+private:
     // Nemotron3DiarizationSpeakerCache.update with no look-back frames
     void update(const std::vector<float> & seq, const std::vector<float> & probs, int nc, int nf, int ch) {
         const int chunk_start = nc + nf;
@@ -545,6 +666,41 @@ private:
     int n_cache_ = 0, n_fifo_ = 0;
     bool compressed_ = false;
 };
+
+// Pushes to several streams: every round, the next streaming step of each stream that has one,
+// batched across streams by sequence length (each stream keeps its own masks).
+bool sortformer::streams_push(graph_runner & g, session * const * ss, int n, const float * const * x, const int64_t * len,
+                              float * const * out) const {
+    std::vector<sortformer_session *> s(n);
+    std::vector<int64_t> steps(n);
+    std::vector<float *> o(out, out + n);
+    for (int i = 0; i < n; ++i) {
+        s[i] = static_cast<sortformer_session *>(ss[i]);
+        steps[i] = s[i]->append(x[i], len[i]);
+    }
+    std::vector<sortformer_session::step_job> jobs(n);
+    std::vector<sortformer_session::embed_job> ejobs(n);
+    for (;;) {
+        // the embeddings of this round's steps, batched across streams
+        for (;;) {
+            std::vector<sortformer_session::embed_job *> er;
+            for (int i = 0; i < n; ++i)
+                if (steps[i] > 0 && s[i]->next_embed(s[i]->step_upto(), s[i]->valid(), ejobs[i])) er.push_back(&ejobs[i]);
+            if (er.empty()) break;
+            if (!sortformer_session::run_embeds(g, *this, er.data(), (int) er.size())) return false;
+        }
+        std::vector<sortformer_session::step_job *> round;
+        for (int i = 0; i < n; ++i) {
+            if (steps[i] == 0) continue;
+            if (!s[i]->prepare(g, s[i]->chunk(), s[i]->rc(), s[i]->valid(), o[i], jobs[i])) return false;
+            round.push_back(&jobs[i]);
+            o[i] += (size_t) s[i]->chunk() * SUB_ * NS_;
+            --steps[i];
+        }
+        if (round.empty()) return true;
+        if (!sortformer_session::run_jobs(g, *this, round.data(), (int) round.size())) return false;
+    }
+}
 
 std::unique_ptr<session> sortformer::new_session(int slice_samples, int lookahead_samples, bool offline, std::string & err) const {
     const int E = SUB_ * HOP;

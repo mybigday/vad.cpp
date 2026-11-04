@@ -132,6 +132,7 @@ Nemotron-3-Diarization emits 8 speaker probabilities every 10 ms. Speakers are n
 - `vad_detect` runs the model's offline mode: 27.2 s chunks with 3.2 s of look-ahead.
 - Streams process one chunk per step. `slice_samples` sets the chunk (in 80 ms frames, default 9) and `lookahead_samples` its look-ahead. The defaults are the model card's presets: 9 + 4 frames gives 1.04 s of latency, 6 + 2 gives 0.64 s, and 3 + 1 gives 0.32 s.
 - Every mode matches the official transformers implementation within 2e-5 on CPU (`tests/test_diarization.cpp`, 84 s and four speakers).
+- `vad_streams_push` batches the steps of several streams into shared computes (equal to the streams run alone): Vulkan 340 → 216 µs per stream frame at 4 streams, `cpu` with 16 threads 710 → 600 µs.
 
 Speed on an 84 s recording, in µs per 10 ms frame (`bench/results/nemotron_x86.txt`):
 

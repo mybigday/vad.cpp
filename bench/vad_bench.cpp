@@ -137,8 +137,8 @@ int main(int argc, char ** argv) {
             const int S = atoi(ss.c_str());
             std::vector<vad_stream *> st(S);
             std::vector<const float *> ch(S);
-            std::vector<int> len(S, hop), maxp(S, 64), nout(S);
-            std::vector<std::vector<float>> pr(S, std::vector<float>((size_t) 64 * no));
+            std::vector<int> len(S, hop), maxp(S, 1024), nout(S);   // a step of a chunked model can emit many frames
+            std::vector<std::vector<float>> pr(S, std::vector<float>((size_t) 1024 * no));
             std::vector<float *> prp(S);
             for (int k = 0; k < S; ++k) prp[k] = pr[k].data();
             long total = 0;

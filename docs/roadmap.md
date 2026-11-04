@@ -6,7 +6,7 @@ No new models planned. desert-ant-labs/who was evaluated and dropped: its licens
 
 Done: [nvidia/Nemotron-3-Diarization](https://huggingface.co/nvidia/Nemotron-3-Diarization) (`sortformer`, docs/gguf.md). It loads NVIDIA's GGUF as is and the safetensors through `tools/convert_sortformer.py`. Offline and streaming match the transformers implementation within 2e-5 on CPU. Open items:
 - The `head.activity_head` of the published GGUF (LayerNorm + 3 classes) is not in the reference model. Expose it once its meaning is documented.
-- `vad_streams_push` runs diarization streams one after another. Batching the chunk steps of several streams needs per-stream masks in one encoder graph.
+- `vad_streams_push` batches the streaming steps of several diarization streams (embedding and encoder graphs with a batch dimension, per-stream attention masks); equal to the streams run alone. Per stream and 10 ms frame: Vulkan 340 → 216 µs at 4 streams, `cpu` 16 threads 710 → 600 µs. The encoder's attention over ~300 frames per stream bounds it.
 - Verified on WASM (node, single-threaded, about 12 min for the test) and on a Pixel 7 Pro (Android NDK, within 1.3e-5 of the reference). The browser/WebGPU path has not been tried with the 400 MB F32 file.
 
 ## Platforms

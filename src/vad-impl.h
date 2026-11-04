@@ -164,6 +164,13 @@ struct arch {
     virtual bool host_driven() const { return false; }
     virtual std::unique_ptr<session> new_session(int slice_samples, int lookahead_samples, bool offline,
                                                  std::string & err) const { (void) slice_samples; (void) lookahead_samples; (void) offline; err = "not a host-driven model"; return nullptr; }
+    // Host-driven models: pushes x[i] (len[i] samples) to the sessions s[i] of this model, each writing its
+    // n_pending frames to out[i]; models may batch the graph work across sessions. Default: one by one.
+    virtual bool streams_push(graph_runner & g, session * const * s, int n, const float * const * x, const int64_t * len,
+                              float * const * out) const {
+        for (int i = 0; i < n; ++i) if (!s[i]->push(g, x[i], len[i], out[i])) return false;
+        return true;
+    }
 };
 
 std::unique_ptr<arch> make_silero    (const model_file & file, std::string & err);

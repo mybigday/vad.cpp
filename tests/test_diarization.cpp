@@ -135,6 +135,42 @@ int main() {
             const float d = max_diff(got, off, exact * NS);
             CHECK(d == 0.0f, "offline-config stream differs from vad_detect: %g", d);
         }
+        // several streams through vad_streams_push (encoder steps batched across streams) == each alone
+        if (spec == devices[0]) {
+            const int S = 3;
+            const size_t n_audio = 30 * SR, piece = 3333;
+            std::vector<std::vector<float>> au(S), alone(S), got(S);
+            std::vector<vad_stream *> st(S);
+            vad_stream_params sp = vad_stream_default_params();
+            for (int i = 0; i < S; ++i) {
+                au[i].assign(audio.begin() + (size_t) i * 7 * SR, audio.begin() + (size_t) i * 7 * SR + n_audio);
+                alone[i] = run_stream(m, sp, au[i], n_audio - 1, piece);   // no flush: n < size
+                st[i] = vad_stream_new_with_params(m, sp);
+            }
+            for (size_t at = 0; at < n_audio - 1; at += piece) {
+                const int len = (int) std::min<size_t>(piece, n_audio - 1 - at);
+                std::vector<const float *> ptr(S);
+                std::vector<int> lens(S, len), maxp(S), nout(S);
+                std::vector<std::vector<float>> out(S);
+                std::vector<float *> outp(S);
+                for (int i = 0; i < S; ++i) {
+                    ptr[i] = au[i].data() + at;
+                    maxp[i] = vad_stream_n_pending(st[i], len);
+                    out[i].resize((size_t) maxp[i] * NS + 1);
+                    outp[i] = out[i].data();
+                }
+                CHECK(vad_streams_push(st.data(), S, ptr.data(), lens.data(), outp.data(), maxp.data(), nout.data()) == 0, "streams_push");
+                for (int i = 0; i < S; ++i) got[i].insert(got[i].end(), out[i].begin(), out[i].begin() + (size_t) nout[i] * NS);
+            }
+            float d = 0;
+            for (int i = 0; i < S; ++i) {
+                CHECK(got[i].size() == alone[i].size() && !got[i].empty(), "batched stream %d: %zu vs %zu values", i, got[i].size(), alone[i].size());
+                d = std::max(d, max_diff(got[i], alone[i], got[i].size()));
+                vad_stream_free(st[i]);
+            }
+            fprintf(stderr, "%-10s %-52s %-17s max|p - alone| %.2e\n", spec.c_str(), file.c_str(), "batched x3", d);
+            CHECK(d < (cpu_dev ? 1e-4f : 1e-2f), "batched streams vs alone %g", d);
+        }
         // look-ahead beyond the model's maximum is refused
         {
             vad_stream_params sp = vad_stream_default_params();
