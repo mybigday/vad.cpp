@@ -35,7 +35,9 @@ Done: [nvidia/Nemotron-3-Diarization](https://huggingface.co/nvidia/Nemotron-3-D
     - smart-turn F16 single-window streaming on the Genio's A78: 3–7% behind ggml-cpu at 4 and 8 threads (it wins offline, and on the Pixel by 1.6–2×). Routing its many-row GEMMs through the cache-blocked F32 kernel was tried and was slower on the Pixel.
   - To do:
     - SVE variants.
-- **Stream vs offline.** FireRed differs by 1.8e-7 between streaming (or batched streams) and offline on `vad-cpu`, even for F32 files, on x86 and aarch64 (ggml-cpu is exact). Within tolerance; the cause is not located yet.
+- **Stream vs offline.** FireRed differs by up to 3.6e-7 between streaming and offline on `vad-cpu`, even for F32 files, on x86 and aarch64 (ggml-cpu is exact). Within tolerance; the cause is not located yet. What is known:
+  - Through the API it depends on which graph size (T bucket 64/16/4/1) computes a frame: pushing the whole file at once equals `vad_detect`, pushing 1 frame at a time differs from frame 3.
+  - Outside the runtime the graphs agree exactly: a T-frame graph vs T single-frame graphs with the state carried over, node by node, for T up to 300, with real audio, shared weights, buffer reuse and `ggml_backend_sched`. The remaining suspects are in the runtime: resident state columns, graph-instance reuse across pushes.
 - **AVX-VNNI (VEX) for Q8_0 on AVX2-only x86** (e.g. Alder Lake): the AVX-512 VNNI variant is done; CPUs without AVX-512 still convert int8 weights to F32.
 - Fuse the LSTM cell for Silero's multi-chunk graphs.
 - Batch sliding-window streams across streams in `vad_streams_push`.
