@@ -19,7 +19,7 @@ VAD_TEST_DATA=/tmp/vad/models VAD_ASSETS=/tmp/vad/assets ./test_models
 ```
 
 Verified on a MediaTek Genio board (Yocto Linux, Cortex-A55 + A78). All tests pass with the `vad-cpu` kernels.
-- **Kernel variants:** on aarch64 Linux/Android, `vad-cpu` builds a baseline NEON variant and an ARMv8.2 (fp16 + dotprod) variant, chosen at runtime from HWCAP. The ARMv8.2 variant runs F16 weights with fp16 activations and Q8_0 weights with int8 activations (see "Weight precision" in the README). F32 weights are computed in F32 on both.
+- **Kernel variants:** on aarch64 Linux/Android/Apple, `vad-cpu` builds a baseline NEON variant and an ARMv8.2 (fp16 + dotprod) variant, chosen at runtime (HWCAP on Linux, `hw.optional.arm.*` sysctls on Apple). The ARMv8.2 variant runs F16 weights with fp16 activations and Q8_0 weights with int8 activations (see "Weight precision" in the README). F32 weights are computed in F32 on both.
 - Benchmarks are in `bench/results/arm_genio.txt`. On big.LITTLE parts, pin with `taskset` for stable timings.
 
 ## Android (NDK)
@@ -33,6 +33,20 @@ LD_LIBRARY_PATH=/data/local/tmp/vad/lib VAD_TEST_DATA=/data/local/tmp/vad/models
 ```
 
 Verified on a Pixel 7 Pro (Android 14, Tensor G2: 2× Cortex-X1, 2× A78, 4× A55). All tests pass, and the ARMv8.2 variant is selected at runtime. The static ARM Linux build above also runs there unchanged. Spot benchmarks are in `bench/results/arm_genio.txt`. The phone throttles under sustained load, so compare builds interleaved and take minimums.
+
+## macOS / iOS
+
+The native build above works on Apple Silicon. For iOS:
+
+```sh
+cmake -S . -B build-ios -G Ninja -DCMAKE_SYSTEM_NAME=iOS -DCMAKE_OSX_ARCHITECTURES=arm64 \
+      -DCMAKE_OSX_DEPLOYMENT_TARGET=15.1 -DCMAKE_BUILD_TYPE=Release
+cmake --build build-ios
+```
+
+iOS compilers target ARMv8.0 by default, so the ARMv8.2 variant (picked at runtime) matters there: Q8_0 models run about 2x faster with it. Universal (multi-arch) builds get the baseline kernels only.
+
+Verified on an M1 Mac mini (macOS 26): all tests pass. Benchmarks are in `bench/results/apple_m1.txt`. vad-cpu beats ggml-cpu on every model there. Metal is much slower for streaming (about 1 ms per push); it only helps the non-streaming FireRed VAD offline or with many streams, on a single CPU thread.
 
 ## WebAssembly (node and browsers)
 

@@ -35,7 +35,7 @@ Status: early.
     - packed weights,
     - batch rows flattened into one GEMM,
     - its own threading,
-    - kernels dispatched by ISA (AVX2, AVX-512 and AVX-512 VNNI at runtime; NEON with an ARMv8.2 fp16/dotprod variant chosen at runtime on Linux/Android; WASM SIMD at build time).
+    - kernels dispatched by ISA (AVX2, AVX-512 and AVX-512 VNNI at runtime; NEON with an ARMv8.2 fp16/dotprod variant chosen at runtime on Linux/Android/Apple; WASM SIMD at build time).
   - Other devices (Vulkan, CUDA, Metal, …) use the stock ggml backends.
 
 ## Build
@@ -198,7 +198,7 @@ Effect against the same model's F32 file (67.8 s and 11 s samples; ARMv8.2 on a 
 
 ## Performance
 
-Test setup: AMD Ryzen AI Max+ 395 (Zen 5), 67.8 s of audio, F32 weights. Times are in µs per chunk (per stream for the 256-stream rows), measured with `build/vad-bench` in one session (min of 3 runs). See above for F16 weights. The full matrix over models, precisions and 1/4/8/16 threads is in `bench/results/vad_cpu_vs_ggml_x86.txt`, and ARM results are in `bench/results/arm_genio.txt`.
+Test setup: AMD Ryzen AI Max+ 395 (Zen 5), 67.8 s of audio, F32 weights. Times are in µs per chunk (per stream for the 256-stream rows), measured with `build/vad-bench` in one session (min of 3 runs). See above for F16 weights. The full matrix over models, precisions and 1/4/8/16 threads is in `bench/results/vad_cpu_vs_ggml_x86.txt`, ARM results are in `bench/results/arm_genio.txt`, and Apple M1 results are in `bench/results/apple_m1.txt`.
 
 Silero v6.2 (32 ms chunks):
 

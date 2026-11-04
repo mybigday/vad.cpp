@@ -1,0 +1,306 @@
+# vad-cpu (cpu) vs ggml-cpu vs Metal (MTL0) on Apple M1 (Mac mini, macOS 26), us per output frame
+# Audio: assets/test_16k.wav (67.8 s). vad-bench -s 16 -r 3; Metal only at t=1 (threads don't apply).
+# Native macOS build, ggml defaults (GGML_NATIVE, Accelerate/BLAS, Metal); vad-cpu selects the ARMv8.2 variant.
+#
+# Summary:
+# - vad-cpu beats ggml-cpu on every row (1.2x to 4.8x).
+# - Metal loses on all streaming models: ~800-1200 us per single-hop push (command-buffer round trip).
+# - Metal wins only on firered-vad (non-streaming) at t=1 for offline/many streams; at t=4 vad-cpu
+#   matches or beats it (offline q8_0: cpu 4.97 vs Metal 8.18).
+#
+# iOS builds target ARMv8.0 (apple-a7) by default. Before the ARMv8.2 variant was built for Apple targets,
+# F16/Q8_0 ran the plain path there. Same machine, -mcpu=apple-a7, vad-cpu t=1, old (generic) -> new (armv8.2):
+#   silero-v6.2-f16          stream 25.09 -> 20.44   streams S=16 22.03 -> 18.22
+#   silero-v6.2-q8_0         stream 33.03 -> 16.49   streams S=16 22.84 -> 13.54
+#   firered-stream-vad-f16   stream 41.36 -> 35.94   streams S=16 30.99 -> 27.76
+#   firered-stream-vad-q8_0  stream 57.50 -> 35.14   streams S=16 32.27 -> 21.20
+#   (F32 unchanged: silero-v6.2 stream 30.26 -> 30.13)
+
+=== silero-v6.2 t=1
+[cpu] silero (speech), 67.8 s audio, hop 512, lookahead 0 (us per output frame)
+  stream (1 hop per push)               29.70
+  offline (vad_detect)                  24.52
+  streams S=16                          21.78
+[ggml-cpu] silero (speech), 67.8 s audio, hop 512, lookahead 0 (us per output frame)
+  stream (1 hop per push)               63.30
+  offline (vad_detect)                  52.92
+  streams S=16                          50.97
+[MTL0] silero (speech), 67.8 s audio, hop 512, lookahead 0 (us per output frame)
+  stream (1 hop per push)              818.77
+  offline (vad_detect)                  97.92
+  streams S=16                          86.51
+=== silero-v6.2 t=4
+[cpu] silero (speech), 67.8 s audio, hop 512, lookahead 0 (us per output frame)
+  stream (1 hop per push)               28.94
+  offline (vad_detect)                  13.10
+  streams S=16                           9.93
+[ggml-cpu] silero (speech), 67.8 s audio, hop 512, lookahead 0 (us per output frame)
+  stream (1 hop per push)               83.83
+  offline (vad_detect)                  19.37
+  streams S=16                          19.25
+=== silero-v6.2-f16 t=1
+[cpu] silero (speech), 67.8 s audio, hop 512, lookahead 0 (us per output frame)
+  stream (1 hop per push)               20.19
+  offline (vad_detect)                  18.28
+  streams S=16                          17.90
+[ggml-cpu] silero (speech), 67.8 s audio, hop 512, lookahead 0 (us per output frame)
+  stream (1 hop per push)               42.82
+  offline (vad_detect)                  34.83
+  streams S=16                          33.24
+[MTL0] silero (speech), 67.8 s audio, hop 512, lookahead 0 (us per output frame)
+  stream (1 hop per push)              842.18
+  offline (vad_detect)                 105.11
+  streams S=16                          86.64
+=== silero-v6.2-f16 t=4
+[cpu] silero (speech), 67.8 s audio, hop 512, lookahead 0 (us per output frame)
+  stream (1 hop per push)               20.13
+  offline (vad_detect)                   8.49
+  streams S=16                           8.12
+[ggml-cpu] silero (speech), 67.8 s audio, hop 512, lookahead 0 (us per output frame)
+  stream (1 hop per push)               78.51
+  offline (vad_detect)                  14.82
+  streams S=16                          14.32
+=== silero-v6.2-q8_0 t=1
+[cpu] silero (speech), 67.8 s audio, hop 512, lookahead 0 (us per output frame)
+  stream (1 hop per push)               16.65
+  offline (vad_detect)                  14.31
+  streams S=16                          13.25
+[ggml-cpu] silero (speech), 67.8 s audio, hop 512, lookahead 0 (us per output frame)
+  stream (1 hop per push)               43.74
+  offline (vad_detect)                  36.38
+  streams S=16                          35.27
+[MTL0] silero (speech), 67.8 s audio, hop 512, lookahead 0 (us per output frame)
+  stream (1 hop per push)              824.37
+  offline (vad_detect)                  54.00
+  streams S=16                          90.59
+=== silero-v6.2-q8_0 t=4
+[cpu] silero (speech), 67.8 s audio, hop 512, lookahead 0 (us per output frame)
+  stream (1 hop per push)               16.21
+  offline (vad_detect)                   6.91
+  streams S=16                           6.85
+[ggml-cpu] silero (speech), 67.8 s audio, hop 512, lookahead 0 (us per output frame)
+  stream (1 hop per push)               78.39
+  offline (vad_detect)                  15.39
+  streams S=16                          14.97
+=== firered-stream-vad t=1
+[cpu] firered (speech), 67.8 s audio, hop 160, lookahead 0 (us per output frame)
+  stream (1 hop per push)               60.93
+  offline (vad_detect)                  20.95
+  streams S=16                          30.66
+[ggml-cpu] firered (speech), 67.8 s audio, hop 160, lookahead 0 (us per output frame)
+  stream (1 hop per push)               76.34
+  offline (vad_detect)                  49.45
+  streams S=16                          57.54
+[MTL0] firered (speech), 67.8 s audio, hop 160, lookahead 0 (us per output frame)
+  stream (1 hop per push)             1100.28
+  offline (vad_detect)                  44.83
+  streams S=16                         239.13
+=== firered-stream-vad t=4
+[cpu] firered (speech), 67.8 s audio, hop 160, lookahead 0 (us per output frame)
+  stream (1 hop per push)               65.19
+  offline (vad_detect)                   8.17
+  streams S=16                          11.59
+[ggml-cpu] firered (speech), 67.8 s audio, hop 160, lookahead 0 (us per output frame)
+  stream (1 hop per push)              108.83
+  offline (vad_detect)                  15.96
+  streams S=16                          23.66
+=== firered-stream-vad-f16 t=1
+[cpu] firered (speech), 67.8 s audio, hop 160, lookahead 0 (us per output frame)
+  stream (1 hop per push)               35.17
+  offline (vad_detect)                  19.04
+  streams S=16                          27.23
+[ggml-cpu] firered (speech), 67.8 s audio, hop 160, lookahead 0 (us per output frame)
+  stream (1 hop per push)               58.53
+  offline (vad_detect)                  36.37
+  streams S=16                          44.79
+[MTL0] firered (speech), 67.8 s audio, hop 160, lookahead 0 (us per output frame)
+  stream (1 hop per push)             1113.16
+  offline (vad_detect)                  32.60
+  streams S=16                         230.12
+=== firered-stream-vad-f16 t=4
+[cpu] firered (speech), 67.8 s audio, hop 160, lookahead 0 (us per output frame)
+  stream (1 hop per push)               37.70
+  offline (vad_detect)                   7.28
+  streams S=16                          10.68
+[ggml-cpu] firered (speech), 67.8 s audio, hop 160, lookahead 0 (us per output frame)
+  stream (1 hop per push)              105.21
+  offline (vad_detect)                  12.47
+  streams S=16                          19.78
+=== firered-stream-vad-q8_0 t=1
+[cpu] firered (speech), 67.8 s audio, hop 160, lookahead 0 (us per output frame)
+  stream (1 hop per push)               34.22
+  offline (vad_detect)                  12.80
+  streams S=16                          20.62
+[ggml-cpu] firered (speech), 67.8 s audio, hop 160, lookahead 0 (us per output frame)
+  stream (1 hop per push)               55.19
+  offline (vad_detect)                  33.67
+  streams S=16                          42.31
+[MTL0] firered (speech), 67.8 s audio, hop 160, lookahead 0 (us per output frame)
+  stream (1 hop per push)             1200.47
+  offline (vad_detect)                  33.53
+  streams S=16                         259.20
+=== firered-stream-vad-q8_0 t=4
+[cpu] firered (speech), 67.8 s audio, hop 160, lookahead 0 (us per output frame)
+  stream (1 hop per push)               37.01
+  offline (vad_detect)                   5.59
+  streams S=16                           8.60
+[ggml-cpu] firered (speech), 67.8 s audio, hop 160, lookahead 0 (us per output frame)
+  stream (1 hop per push)              101.52
+  offline (vad_detect)                  11.71
+  streams S=16                          18.64
+=== firered-vad t=1
+[cpu] firered (speech), 67.8 s audio, hop 160, lookahead 25600 (us per output frame)
+  stream (1 hop per push)              183.16
+  offline (vad_detect)                  26.21
+  window slice 250ms la max            365.56
+  window slice 250ms la 500ms          247.90
+  window slice 500ms la max            183.15
+  window slice 500ms la 500ms          124.27
+  window slice 1000ms la max           107.26
+  window slice 1000ms la 500ms          78.71
+  streams S=16                         188.28
+[ggml-cpu] firered (speech), 67.8 s audio, hop 160, lookahead 25600 (us per output frame)
+  stream (1 hop per push)              438.63
+  offline (vad_detect)                  62.54
+  window slice 250ms la max            873.78
+  window slice 250ms la 500ms          589.35
+  window slice 500ms la max            435.08
+  window slice 500ms la 500ms          295.34
+  window slice 1000ms la max           256.27
+  window slice 1000ms la 500ms         187.74
+  streams S=16                         448.16
+[MTL0] firered (speech), 67.8 s audio, hop 160, lookahead 25600 (us per output frame)
+  stream (1 hop per push)              153.35
+  offline (vad_detect)                   8.00
+  window slice 250ms la max            296.77
+  window slice 250ms la 500ms          251.98
+  window slice 500ms la max            153.22
+  window slice 500ms la 500ms          127.64
+  window slice 1000ms la max            77.58
+  window slice 1000ms la 500ms          69.57
+  streams S=16                          58.16
+=== firered-vad t=4
+[cpu] firered (speech), 67.8 s audio, hop 160, lookahead 25600 (us per output frame)
+  stream (1 hop per push)               56.03
+  offline (vad_detect)                   7.52
+  window slice 250ms la max            111.32
+  window slice 250ms la 500ms           76.73
+  window slice 500ms la max             55.92
+  window slice 500ms la 500ms           38.46
+  window slice 1000ms la max            32.49
+  window slice 1000ms la 500ms          23.91
+  streams S=16                          51.82
+[ggml-cpu] firered (speech), 67.8 s audio, hop 160, lookahead 25600 (us per output frame)
+  stream (1 hop per push)              120.79
+  offline (vad_detect)                  16.89
+  window slice 250ms la max            240.04
+  window slice 250ms la 500ms          164.44
+  window slice 500ms la max            120.73
+  window slice 500ms la 500ms           82.39
+  window slice 1000ms la max            70.58
+  window slice 1000ms la 500ms          51.46
+  streams S=16                         121.23
+=== firered-vad-f16 t=1
+[cpu] firered (speech), 67.8 s audio, hop 160, lookahead 25600 (us per output frame)
+  stream (1 hop per push)              173.39
+  offline (vad_detect)                  24.68
+  window slice 250ms la max            345.01
+  window slice 250ms la 500ms          235.10
+  window slice 500ms la max            173.40
+  window slice 500ms la 500ms          117.73
+  window slice 1000ms la max           101.59
+  window slice 1000ms la 500ms          73.51
+  streams S=16                         177.36
+[ggml-cpu] firered (speech), 67.8 s audio, hop 160, lookahead 25600 (us per output frame)
+  stream (1 hop per push)              347.93
+  offline (vad_detect)                  49.65
+  window slice 250ms la max            691.05
+  window slice 250ms la 500ms          471.98
+  window slice 500ms la max            345.72
+  window slice 500ms la 500ms          233.31
+  window slice 1000ms la max           201.75
+  window slice 1000ms la 500ms         147.52
+  streams S=16                         355.14
+[MTL0] firered (speech), 67.8 s audio, hop 160, lookahead 25600 (us per output frame)
+  stream (1 hop per push)              149.44
+  offline (vad_detect)                   8.03
+  window slice 250ms la max            294.13
+  window slice 250ms la 500ms          254.20
+  window slice 500ms la max            146.14
+  window slice 500ms la 500ms          124.26
+  window slice 1000ms la max            76.65
+  window slice 1000ms la 500ms          70.66
+  streams S=16                          57.73
+=== firered-vad-f16 t=4
+[cpu] firered (speech), 67.8 s audio, hop 160, lookahead 25600 (us per output frame)
+  stream (1 hop per push)               51.32
+  offline (vad_detect)                   6.75
+  window slice 250ms la max            101.79
+  window slice 250ms la 500ms           70.35
+  window slice 500ms la max             51.01
+  window slice 500ms la 500ms           35.26
+  window slice 1000ms la max            28.67
+  window slice 1000ms la 500ms          21.91
+  streams S=16                          47.88
+[ggml-cpu] firered (speech), 67.8 s audio, hop 160, lookahead 25600 (us per output frame)
+  stream (1 hop per push)               96.60
+  offline (vad_detect)                  13.66
+  window slice 250ms la max            192.27
+  window slice 250ms la 500ms          134.80
+  window slice 500ms la max             97.20
+  window slice 500ms la 500ms           66.05
+  window slice 1000ms la max            56.39
+  window slice 1000ms la 500ms          41.24
+  streams S=16                          96.23
+=== firered-vad-q8_0 t=1
+[cpu] firered (speech), 67.8 s audio, hop 160, lookahead 25600 (us per output frame)
+  stream (1 hop per push)              126.87
+  offline (vad_detect)                  18.17
+  window slice 250ms la max            252.52
+  window slice 250ms la 500ms          171.84
+  window slice 500ms la max            126.91
+  window slice 500ms la 500ms           86.01
+  window slice 1000ms la max            74.30
+  window slice 1000ms la 500ms          53.78
+  streams S=16                         130.09
+[ggml-cpu] firered (speech), 67.8 s audio, hop 160, lookahead 25600 (us per output frame)
+  stream (1 hop per push)              329.01
+  offline (vad_detect)                  46.78
+  window slice 250ms la max            654.90
+  window slice 250ms la 500ms          445.97
+  window slice 500ms la max            328.81
+  window slice 500ms la 500ms          222.39
+  window slice 1000ms la max           192.60
+  window slice 1000ms la 500ms         138.58
+  streams S=16                         333.82
+[MTL0] firered (speech), 67.8 s audio, hop 160, lookahead 25600 (us per output frame)
+  stream (1 hop per push)              156.53
+  offline (vad_detect)                   8.18
+  window slice 250ms la max            294.89
+  window slice 250ms la 500ms          252.67
+  window slice 500ms la max            153.61
+  window slice 500ms la 500ms          126.56
+  window slice 1000ms la max            79.47
+  window slice 1000ms la 500ms          71.35
+  streams S=16                          57.71
+=== firered-vad-q8_0 t=4
+[cpu] firered (speech), 67.8 s audio, hop 160, lookahead 25600 (us per output frame)
+  stream (1 hop per push)               38.85
+  offline (vad_detect)                   4.97
+  window slice 250ms la max             77.10
+  window slice 250ms la 500ms           53.68
+  window slice 500ms la max             38.60
+  window slice 500ms la 500ms           26.99
+  window slice 1000ms la max            21.44
+  window slice 1000ms la 500ms          16.61
+  streams S=16                          35.30
+[ggml-cpu] firered (speech), 67.8 s audio, hop 160, lookahead 25600 (us per output frame)
+  stream (1 hop per push)               92.25
+  offline (vad_detect)                  12.88
+  window slice 250ms la max            183.91
+  window slice 250ms la 500ms          126.10
+  window slice 500ms la max             92.30
+  window slice 500ms la 500ms           63.14
+  window slice 1000ms la max            53.64
+  window slice 1000ms la 500ms          38.95
+  streams S=16                          91.00
