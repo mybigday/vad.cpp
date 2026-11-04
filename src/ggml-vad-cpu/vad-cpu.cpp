@@ -1001,7 +1001,7 @@ ggml_status vad_cpu_graph_compute(ggml_backend_t backend, ggml_cgraph * g) {
         ~prof() {
             // order of StepKind
             static const char * names[] = { "gemm", "unary", "binary", "copy", "copy_strided", "concat", "pad", "pad_reflect",
-                                             "clamp", "ssm_conv", "fsmn", "norm", "scale", "soft_max", "rope", "delegate" };
+                                             "clamp", "ssm_conv", "fsmn", "norm", "scale", "soft_max", "rope", "custom", "delegate" };
             fprintf(stderr, "vad-cpu profile (us per compute over %ld):", calls);
             for (int k = 0; k < 16; ++k) if (acc[k] > 0) fprintf(stderr, " %s %.2f", names[k], acc[k] / calls);
             fprintf(stderr, "\n");
