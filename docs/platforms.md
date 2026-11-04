@@ -22,6 +22,18 @@ Verified on a MediaTek Genio board (Yocto Linux, Cortex-A55 + A78). All tests pa
 - **Kernel variants:** on aarch64 Linux/Android, `vad-cpu` builds a baseline NEON variant and an ARMv8.2 (fp16 + dotprod) variant, chosen at runtime from HWCAP. The ARMv8.2 variant runs F16 weights with fp16 activations and Q8_0 weights with int8 activations (see "Weight precision" in the README). F32 weights are computed in F32 on both.
 - Benchmarks are in `bench/results/arm_genio.txt`. On big.LITTLE parts, pin with `taskset` for stable timings.
 
+## Android (NDK)
+
+```sh
+cmake -S . -B build-android -DCMAKE_TOOLCHAIN_FILE=$ANDROID_NDK/build/cmake/android.toolchain.cmake \
+      -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=android-28 -DCMAKE_BUILD_TYPE=Release -DGGML_OPENMP=OFF -DGGML_NATIVE=OFF
+cmake --build build-android -j
+# copy the binaries, libvad.so, third_party/ggml/src/libggml*.so, models and assets to /data/local/tmp/vad, then:
+LD_LIBRARY_PATH=/data/local/tmp/vad/lib VAD_TEST_DATA=/data/local/tmp/vad/models VAD_ASSETS=/data/local/tmp/vad/assets ./test_models
+```
+
+Verified on a Pixel 7 Pro (Android 14, Tensor G2: 2× Cortex-X1, 2× A78, 4× A55). All tests pass, and the ARMv8.2 variant is selected at runtime. The static ARM Linux build above also runs there unchanged. Spot benchmarks are in `bench/results/arm_genio.txt`. The phone throttles under sustained load, so compare builds interleaved and take minimums.
+
 ## WebAssembly (node and browsers)
 
 Requires [emsdk](https://github.com/emscripten-core/emsdk) (`source ~/emsdk/emsdk_env.sh`).

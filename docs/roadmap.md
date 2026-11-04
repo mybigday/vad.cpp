@@ -16,7 +16,7 @@ Done: [nvidia/Nemotron-3-Diarization](https://huggingface.co/nvidia/Nemotron-3-D
 - **Web:** WASM (CPU, SIMD128) and WebGPU are done (docs/platforms.md).
   - Open issue: ggml-cpu (not `vad-cpu`) on WASM gives wrong results with F16 weights (smart-turn F16: 0.52 deviation). Investigate or report upstream.
 - **ARM:**
-  - Verified on a MediaTek Genio board (aarch64 Linux, Cortex-A55 + A78): all tests pass with the `vad-cpu` kernels.
+  - Verified on a MediaTek Genio board (aarch64 Linux, Cortex-A55 + A78) and a Pixel 7 Pro (Android 14, NDK build, Tensor G2): all tests pass with the `vad-cpu` kernels.
   - Benchmarks are in `bench/results/arm_genio.txt`.
 
 ## Performance
@@ -28,8 +28,10 @@ Done: [nvidia/Nemotron-3-Diarization](https://huggingface.co/nvidia/Nemotron-3-D
   - Unary math is vectorized.
 - **ARM.**
   - Done: an ARMv8.2 (fp16 + dotprod) variant chosen at runtime, NEON register tiles, streaming one-row F32 GEMV, and per-ISA thread-pool tuning (timed spin; few-row GEMMs split only when the work pays for the dispatch, 2 chunks per thread for big.LITTLE).
-  - On the Genio board `vad-cpu` matches or beats ggml-cpu (`bench/results/arm_genio.txt`).
-  - Single-thread FireRed F32 streaming is the closest case, at parity within noise. It is bound by streaming 2.8 MB of F32 weights per 10 ms frame.
+  - `vad-cpu` beats ggml-cpu on the Genio board and the Pixel in nearly every cell (`bench/results/arm_genio.txt`), typically 1.2–3× and far more for multi-threaded streaming.
+  - Closest cases:
+    - Single-thread FireRed F32 streaming: at parity on the Genio, ahead on the Pixel's X1 (178 vs 204 µs). It is bound by streaming about 2.3 MB of F32 weights per 10 ms frame.
+    - smart-turn F16 single-window streaming on the Genio's A78: 3–7% behind ggml-cpu at 4 and 8 threads (it wins offline, and on the Pixel by 1.6–2×). Routing its many-row GEMMs through the cache-blocked F32 kernel was tried and was slower on the Pixel.
   - To do:
     - SVE variants.
     - A faster front end. The FireRed fbank is a 400 → 514 F32 DFT matrix (~0.8 MB per frame). A real FFT would remove most of it on every backend.

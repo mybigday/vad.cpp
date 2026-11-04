@@ -1,135 +1,184 @@
-test_kernels: ok
-test_segments: ok
-test_models: ok
-test_turn: ok
+# vad-cpu (cpu) vs ggml-cpu on ARM, us per output (per frame; per 8 s window for smart-turn)
+# ratio = ggml / cpu (> 1: vad-cpu faster). Audio: assets/test_16k.wav (67.8 s); smart-turn: assets/jfk.wav.
+# Both CPUs run the ARMv8.2 (fp16 + dotprod) kernel variant, chosen at runtime.
 
-[silero-v6.2 t=1 cpu] silero (speech), 67.8 s audio, hop 512, lookahead 0 (us per output)
-  stream (1 hop per push)              126.45
-  offline (vad_detect)                  72.48
-  streams S=64                          65.51
+## MediaTek Genio, Yocto Linux, 6x Cortex-A55 + 2x Cortex-A78, static aarch64 build
+# Full matrix, min of 3 runs. t=1 pinned to an A78 (taskset -c 7), t=2 to both A78 (taskset -c 6,7), t=4/8 unpinned.
+# Built against ggml 0.28.0; the vad-cpu kernels are unchanged on the pinned ggml 0.26.0 (spot checks below).
+# The run was stopped before firered-vad-q8_0 and smart-turn; those are in the spot checks.
+# firered-stream-vad F32 t=1 single-hop streaming is at parity (bound by streaming 2.3 MB of F32 weights per frame).
 
-[silero-v6.2 t=1 ggml-cpu] silero (speech), 67.8 s audio, hop 512, lookahead 0 (us per output)
-  stream (1 hop per push)              119.94
-  offline (vad_detect)                  95.51
-  streams S=64                          93.53
+silero-v6.2.gguf               t=1 streams S=64                   cpu      78.55 ggml      93.10 x 1.19
+silero-v6.2.gguf               t=1 offline (vad_detect)           cpu      82.41 ggml      95.51 x 1.16
+silero-v6.2.gguf               t=1 stream (1 hop per push)        cpu     110.04 ggml     119.16 x 1.08
+silero-v6.2.gguf               t=2 streams S=64                   cpu      44.61 ggml      50.02 x 1.12
+silero-v6.2.gguf               t=2 offline (vad_detect)           cpu      52.08 ggml      55.39 x 1.06
+silero-v6.2.gguf               t=2 stream (1 hop per push)        cpu     111.54 ggml     148.07 x 1.33
+silero-v6.2.gguf               t=4 streams S=64                   cpu      41.49 ggml      68.83 x 1.66
+silero-v6.2.gguf               t=4 offline (vad_detect)           cpu      50.59 ggml      82.43 x 1.63
+silero-v6.2.gguf               t=4 stream (1 hop per push)        cpu     109.20 ggml     290.48 x 2.66
+silero-v6.2.gguf               t=8 streams S=64                   cpu      35.11 ggml      46.45 x 1.32
+silero-v6.2.gguf               t=8 offline (vad_detect)           cpu      43.63 ggml      59.05 x 1.35
+silero-v6.2.gguf               t=8 stream (1 hop per push)        cpu     101.02 ggml     559.39 x 5.54
+silero-v6.2-f16.gguf           t=1 streams S=64                   cpu      44.95 ggml      68.26 x 1.52
+silero-v6.2-f16.gguf           t=1 offline (vad_detect)           cpu      47.40 ggml      69.62 x 1.47
+silero-v6.2-f16.gguf           t=1 stream (1 hop per push)        cpu      52.70 ggml      71.25 x 1.35
+silero-v6.2-f16.gguf           t=2 streams S=64                   cpu      25.58 ggml      38.02 x 1.49
+silero-v6.2-f16.gguf           t=2 offline (vad_detect)           cpu      30.24 ggml      42.71 x 1.41
+silero-v6.2-f16.gguf           t=2 stream (1 hop per push)        cpu      54.21 ggml      89.23 x 1.65
+silero-v6.2-f16.gguf           t=4 streams S=64                   cpu      29.06 ggml      54.12 x 1.86
+silero-v6.2-f16.gguf           t=4 offline (vad_detect)           cpu      33.80 ggml      61.67 x 1.82
+silero-v6.2-f16.gguf           t=4 stream (1 hop per push)        cpu      53.03 ggml     212.63 x 4.01
+silero-v6.2-f16.gguf           t=8 streams S=64                   cpu      19.93 ggml      36.32 x 1.82
+silero-v6.2-f16.gguf           t=8 offline (vad_detect)           cpu      25.26 ggml      46.74 x 1.85
+silero-v6.2-f16.gguf           t=8 stream (1 hop per push)        cpu      53.16 ggml     454.45 x 8.55
+silero-v6.2-q8_0.gguf          t=1 streams S=64                   cpu      41.97 ggml      75.77 x 1.81
+silero-v6.2-q8_0.gguf          t=1 offline (vad_detect)           cpu      45.41 ggml      77.27 x 1.70
+silero-v6.2-q8_0.gguf          t=1 stream (1 hop per push)        cpu      43.77 ggml      79.68 x 1.82
+silero-v6.2-q8_0.gguf          t=2 streams S=64                   cpu      24.23 ggml      40.62 x 1.68
+silero-v6.2-q8_0.gguf          t=2 offline (vad_detect)           cpu      29.07 ggml      45.40 x 1.56
+silero-v6.2-q8_0.gguf          t=2 stream (1 hop per push)        cpu      45.85 ggml      87.85 x 1.92
+silero-v6.2-q8_0.gguf          t=4 streams S=64                   cpu      25.20 ggml      58.44 x 2.32
+silero-v6.2-q8_0.gguf          t=4 offline (vad_detect)           cpu      30.30 ggml      67.00 x 2.21
+silero-v6.2-q8_0.gguf          t=4 stream (1 hop per push)        cpu      45.89 ggml     231.15 x 5.04
+silero-v6.2-q8_0.gguf          t=8 streams S=64                   cpu      19.21 ggml      40.32 x 2.10
+silero-v6.2-q8_0.gguf          t=8 offline (vad_detect)           cpu      24.39 ggml      50.78 x 2.08
+silero-v6.2-q8_0.gguf          t=8 stream (1 hop per push)        cpu      47.88 ggml     477.14 x 9.97
+firered-stream-vad.gguf        t=1 streams S=64                   cpu     100.45 ggml     140.17 x 1.40
+firered-stream-vad.gguf        t=1 offline (vad_detect)           cpu      87.80 ggml     113.06 x 1.29
+firered-stream-vad.gguf        t=1 stream (1 hop per push)        cpu     201.55 ggml     202.37 x 1.00
+firered-stream-vad.gguf        t=2 streams S=64                   cpu      58.72 ggml      80.58 x 1.37
+firered-stream-vad.gguf        t=2 offline (vad_detect)           cpu      49.68 ggml      59.93 x 1.21
+firered-stream-vad.gguf        t=2 stream (1 hop per push)        cpu     223.89 ggml     269.80 x 1.21
+firered-stream-vad.gguf        t=4 streams S=64                   cpu      57.79 ggml     118.18 x 2.04
+firered-stream-vad.gguf        t=4 offline (vad_detect)           cpu      47.96 ggml      93.20 x 1.94
+firered-stream-vad.gguf        t=4 stream (1 hop per push)        cpu     226.70 ggml     515.69 x 2.27
+firered-stream-vad.gguf        t=8 streams S=64                   cpu      53.32 ggml      82.00 x 1.54
+firered-stream-vad.gguf        t=8 offline (vad_detect)           cpu      46.60 ggml      63.45 x 1.36
+firered-stream-vad.gguf        t=8 stream (1 hop per push)        cpu     209.46 ggml     783.54 x 3.74
+firered-stream-vad-f16.gguf    t=1 streams S=64                   cpu      73.71 ggml     121.38 x 1.65
+firered-stream-vad-f16.gguf    t=1 offline (vad_detect)           cpu      60.70 ggml      95.11 x 1.57
+firered-stream-vad-f16.gguf    t=1 stream (1 hop per push)        cpu     151.39 ggml     158.84 x 1.05
+firered-stream-vad-f16.gguf    t=2 streams S=64                   cpu      44.39 ggml      71.79 x 1.62
+firered-stream-vad-f16.gguf    t=2 offline (vad_detect)           cpu      35.18 ggml      51.98 x 1.48
+firered-stream-vad-f16.gguf    t=2 stream (1 hop per push)        cpu     168.31 ggml     208.65 x 1.24
+firered-stream-vad-f16.gguf    t=4 streams S=64                   cpu      48.91 ggml     103.20 x 2.11
+firered-stream-vad-f16.gguf    t=4 offline (vad_detect)           cpu      41.54 ggml      81.47 x 1.96
+firered-stream-vad-f16.gguf    t=4 stream (1 hop per push)        cpu     188.17 ggml     411.51 x 2.19
+firered-stream-vad-f16.gguf    t=8 streams S=64                   cpu      38.39 ggml      69.75 x 1.82
+firered-stream-vad-f16.gguf    t=8 offline (vad_detect)           cpu      31.68 ggml      52.17 x 1.65
+firered-stream-vad-f16.gguf    t=8 stream (1 hop per push)        cpu     152.98 ggml     658.34 x 4.30
+firered-stream-vad-q8_0.gguf   t=1 streams S=64                   cpu      60.76 ggml     118.18 x 1.95
+firered-stream-vad-q8_0.gguf   t=1 offline (vad_detect)           cpu      47.93 ggml      92.33 x 1.93
+firered-stream-vad-q8_0.gguf   t=1 stream (1 hop per push)        cpu     129.73 ggml     133.01 x 1.03
+firered-stream-vad-q8_0.gguf   t=2 streams S=64                   cpu      38.45 ggml      69.25 x 1.80
+firered-stream-vad-q8_0.gguf   t=2 offline (vad_detect)           cpu      28.78 ggml      49.35 x 1.71
+firered-stream-vad-q8_0.gguf   t=2 stream (1 hop per push)        cpu     140.47 ggml     179.18 x 1.28
+firered-stream-vad-q8_0.gguf   t=4 streams S=64                   cpu      41.17 ggml     103.49 x 2.51
+firered-stream-vad-q8_0.gguf   t=4 offline (vad_detect)           cpu      32.81 ggml      80.74 x 2.46
+firered-stream-vad-q8_0.gguf   t=4 stream (1 hop per push)        cpu     167.98 ggml     392.55 x 2.34
+firered-stream-vad-q8_0.gguf   t=8 streams S=64                   cpu      33.17 ggml      71.59 x 2.16
+firered-stream-vad-q8_0.gguf   t=8 offline (vad_detect)           cpu      25.61 ggml      55.00 x 2.15
+firered-stream-vad-q8_0.gguf   t=8 stream (1 hop per push)        cpu     136.28 ggml     657.05 x 4.82
+firered-vad.gguf               t=1 streams S=64                   cpu     684.93 ggml     922.02 x 1.35
+firered-vad.gguf               t=1 offline (vad_detect)           cpu     101.73 ggml     137.12 x 1.35
+firered-vad.gguf               t=1 stream (1 hop per push)        cpu     672.51 ggml     903.00 x 1.34
+firered-vad.gguf               t=2 streams S=64                   cpu     354.68 ggml     586.79 x 1.65
+firered-vad.gguf               t=2 offline (vad_detect)           cpu      55.63 ggml      75.70 x 1.36
+firered-vad.gguf               t=2 stream (1 hop per push)        cpu     348.50 ggml     467.11 x 1.34
+firered-vad.gguf               t=4 streams S=64                   cpu     367.96 ggml     771.85 x 2.10
+firered-vad.gguf               t=4 offline (vad_detect)           cpu      49.45 ggml      98.37 x 1.99
+firered-vad.gguf               t=4 stream (1 hop per push)        cpu     361.26 ggml     756.36 x 2.09
+firered-vad.gguf               t=8 streams S=64                   cpu     288.40 ggml     451.80 x 1.57
+firered-vad.gguf               t=8 offline (vad_detect)           cpu      42.47 ggml      65.90 x 1.55
+firered-vad.gguf               t=8 stream (1 hop per push)        cpu     281.94 ggml     438.29 x 1.55
 
-[silero-v6.2 t=4 cpu] silero (speech), 67.8 s audio, hop 512, lookahead 0 (us per output)
-  stream (1 hop per push)              160.35
-  offline (vad_detect)                  75.59
-  streams S=64                          47.31
+## MediaTek Genio, ggml 0.26.0 (ffa4e8b8, the pinned version), spot checks, median of 3
+# smart-turn F16 single-window streaming is 3-7% behind ggml-cpu here (it wins offline and on the Pixel).
 
-[silero-v6.2 t=4 ggml-cpu] silero (speech), 67.8 s audio, hop 512, lookahead 0 (us per output)
-  stream (1 hop per push)              283.86
-  offline (vad_detect)                  80.31
-  streams S=64                          68.53
+silero-v6.2.gguf               t=1 stream (1 hop per push)        cpu     107.45 ggml     125.20 x 1.17
+silero-v6.2.gguf               t=1 offline (vad_detect)           cpu      83.35 ggml     100.29 x 1.20
+silero-v6.2.gguf               t=1 streams S=64                   cpu      79.36 ggml      97.41 x 1.23
+silero-v6.2.gguf               t=4 stream (1 hop per push)        cpu     102.69 ggml     292.10 x 2.84
+silero-v6.2.gguf               t=4 offline (vad_detect)           cpu      50.83 ggml      90.00 x 1.77
+silero-v6.2.gguf               t=4 streams S=64                   cpu      42.78 ggml      75.40 x 1.76
+firered-stream-vad.gguf        t=1 stream (1 hop per push)        cpu     213.89 ggml     219.00 x 1.02
+firered-stream-vad.gguf        t=1 offline (vad_detect)           cpu      87.47 ggml     114.62 x 1.31
+firered-stream-vad.gguf        t=1 streams S=64                   cpu     100.59 ggml     143.66 x 1.43
+firered-stream-vad.gguf        t=4 stream (1 hop per push)        cpu     244.41 ggml     531.34 x 2.17
+firered-stream-vad.gguf        t=4 offline (vad_detect)           cpu      48.65 ggml      96.66 x 1.99
+firered-stream-vad.gguf        t=4 streams S=64                   cpu      58.25 ggml     127.75 x 2.19
+firered-stream-vad-q8_0.gguf   t=1 stream (1 hop per push)        cpu     131.37 ggml     159.57 x 1.21
+firered-stream-vad-q8_0.gguf   t=1 offline (vad_detect)           cpu      47.72 ggml      93.26 x 1.95
+firered-stream-vad-q8_0.gguf   t=1 streams S=64                   cpu      60.68 ggml     122.08 x 2.01
+firered-stream-vad-q8_0.gguf   t=4 stream (1 hop per push)        cpu     166.56 ggml     394.50 x 2.37
+firered-stream-vad-q8_0.gguf   t=4 offline (vad_detect)           cpu      33.40 ggml      81.84 x 2.45
+firered-stream-vad-q8_0.gguf   t=4 streams S=64                   cpu      41.76 ggml     115.52 x 2.77
+smart-turn-v3.2.gguf           t=4 stream (1 hop per push)        cpu  214478.64 ggml  272012.82 x 1.27
+smart-turn-v3.2.gguf           t=4 offline (vad_detect)           cpu  289029.07 ggml  381497.72 x 1.32
+smart-turn-v3.2.gguf           t=4 end of audio only              cpu  214967.81 ggml  271913.87 x 1.26
+smart-turn-v3.2.gguf           t=4 streams S=8                    cpu  212255.41 ggml  266391.12 x 1.26
+smart-turn-v3.2.gguf           t=8 stream (1 hop per push)        cpu  173546.40 ggml  199867.88 x 1.15
+smart-turn-v3.2.gguf           t=8 offline (vad_detect)           cpu  243379.60 ggml  289332.60 x 1.19
+smart-turn-v3.2.gguf           t=8 end of audio only              cpu  172605.33 ggml  198616.57 x 1.15
+smart-turn-v3.2.gguf           t=8 streams S=8                    cpu  173358.34 ggml  201739.10 x 1.16
+smart-turn-v3.2-f16.gguf       t=4 stream (1 hop per push)        cpu  224660.76 ggml  215031.29 x 0.96  <-- slower
+smart-turn-v3.2-f16.gguf       t=4 offline (vad_detect)           cpu  301147.19 ggml  306343.77 x 1.02
+smart-turn-v3.2-f16.gguf       t=4 end of audio only              cpu  225935.05 ggml  215487.72 x 0.95  <-- slower
+smart-turn-v3.2-f16.gguf       t=4 streams S=8                    cpu  212120.93 ggml  212909.48 x 1.00
+smart-turn-v3.2-f16.gguf       t=8 stream (1 hop per push)        cpu  161042.08 ggml  150263.45 x 0.93  <-- slower
+smart-turn-v3.2-f16.gguf       t=8 offline (vad_detect)           cpu  205775.16 ggml  216930.06 x 1.05
+smart-turn-v3.2-f16.gguf       t=8 end of audio only              cpu  160015.70 ggml  154976.57 x 0.97  <-- slower
+smart-turn-v3.2-f16.gguf       t=8 streams S=8                    cpu  146607.22 ggml  151661.61 x 1.03
+smart-turn-v3.2-q8_0.gguf      t=4 stream (1 hop per push)        cpu  123111.97 ggml  205570.36 x 1.67
+smart-turn-v3.2-q8_0.gguf      t=4 offline (vad_detect)           cpu  149050.82 ggml  290993.57 x 1.95
+smart-turn-v3.2-q8_0.gguf      t=4 end of audio only              cpu  123773.29 ggml  205175.24 x 1.66
+smart-turn-v3.2-q8_0.gguf      t=4 streams S=8                    cpu  106620.62 ggml  203206.67 x 1.91
+smart-turn-v3.2-q8_0.gguf      t=8 stream (1 hop per push)        cpu   92227.17 ggml  149204.28 x 1.62
+smart-turn-v3.2-q8_0.gguf      t=8 offline (vad_detect)           cpu  120374.15 ggml  216239.02 x 1.80
+smart-turn-v3.2-q8_0.gguf      t=8 end of audio only              cpu   92170.62 ggml  145771.17 x 1.58
+smart-turn-v3.2-q8_0.gguf      t=8 streams S=8                    cpu   86647.02 ggml  150501.06 x 1.74
 
-[silero-v6.2-f16 t=1 cpu] silero (speech), 67.8 s audio, hop 512, lookahead 0 (us per output)
-  stream (1 hop per push)              125.37
-  offline (vad_detect)                 108.66
-  streams S=64                          94.37
+## Google Pixel 7 Pro, Android 14, Tensor G2 (2x Cortex-X1, 2x A78, 4x A55), NDK build, ggml 0.26.0
+# Spot checks, min of 2 x median of 3. t=1 pinned to an X1 (taskset 80), t=4 unpinned.
+# The phone throttles under sustained load; values vary by up to ~40% between runs.
+# firered-stream-vad F32 t=1 stream re-measured interleaved, min of 6: cpu 178.5 vs ggml 204.4 (the row below is one noisy pair).
 
-[silero-v6.2-f16 t=1 ggml-cpu] silero (speech), 67.8 s audio, hop 512, lookahead 0 (us per output)
-  stream (1 hop per push)               71.50
-  offline (vad_detect)                  69.64
-  streams S=64                          68.33
+silero-v6.2.gguf               t=1 stream (1 hop per push)        cpu      59.72 ggml     106.15 x 1.78
+silero-v6.2.gguf               t=1 streams S=64                   cpu      42.05 ggml      92.94 x 2.21
+silero-v6.2.gguf               t=1 offline (vad_detect)           cpu      46.56 ggml      98.08 x 2.11
+silero-v6.2.gguf               t=4 stream (1 hop per push)        cpu      80.04 ggml    2625.36 x 32.80
+silero-v6.2.gguf               t=4 streams S=64                   cpu      21.61 ggml     107.31 x 4.97
+silero-v6.2.gguf               t=4 offline (vad_detect)           cpu      39.87 ggml     135.29 x 3.39
+silero-v6.2-q8_0.gguf          t=1 stream (1 hop per push)        cpu      38.24 ggml     101.37 x 2.65
+silero-v6.2-q8_0.gguf          t=1 streams S=64                   cpu      27.30 ggml      84.38 x 3.09
+silero-v6.2-q8_0.gguf          t=1 offline (vad_detect)           cpu      31.52 ggml      92.79 x 2.94
+silero-v6.2-q8_0.gguf          t=4 stream (1 hop per push)        cpu      32.81 ggml    2436.38 x 74.26
+silero-v6.2-q8_0.gguf          t=4 streams S=64                   cpu      13.44 ggml     111.05 x 8.26
+silero-v6.2-q8_0.gguf          t=4 offline (vad_detect)           cpu      19.68 ggml     136.18 x 6.92
+firered-stream-vad.gguf        t=1 stream (1 hop per push)        cpu     190.68 ggml     179.60 x 0.94  <-- slower
+firered-stream-vad.gguf        t=1 streams S=64                   cpu      71.90 ggml     145.14 x 2.02
+firered-stream-vad.gguf        t=1 offline (vad_detect)           cpu      59.76 ggml     116.09 x 1.94
+firered-stream-vad.gguf        t=4 stream (1 hop per push)        cpu     159.43 ggml    2156.28 x 13.52
+firered-stream-vad.gguf        t=4 streams S=64                   cpu      40.46 ggml     199.69 x 4.94
+firered-stream-vad.gguf        t=4 offline (vad_detect)           cpu      26.58 ggml     121.38 x 4.57
+firered-stream-vad-f16.gguf    t=1 stream (1 hop per push)        cpu     104.97 ggml     220.17 x 2.10
+firered-stream-vad-f16.gguf    t=1 streams S=64                   cpu      68.27 ggml     206.62 x 3.03
+firered-stream-vad-f16.gguf    t=1 offline (vad_detect)           cpu      47.78 ggml     189.15 x 3.96
+firered-stream-vad-f16.gguf    t=4 stream (1 hop per push)        cpu     108.72 ggml    2313.20 x 21.28
+firered-stream-vad-f16.gguf    t=4 streams S=64                   cpu      30.37 ggml     241.69 x 7.96
+firered-stream-vad-f16.gguf    t=4 offline (vad_detect)           cpu      20.89 ggml     210.05 x 10.06
+firered-stream-vad-q8_0.gguf   t=1 stream (1 hop per push)        cpu     102.19 ggml     153.33 x 1.50
+firered-stream-vad-q8_0.gguf   t=1 streams S=64                   cpu      54.26 ggml     137.37 x 2.53
+firered-stream-vad-q8_0.gguf   t=1 offline (vad_detect)           cpu      33.29 ggml     107.67 x 3.23
+firered-stream-vad-q8_0.gguf   t=4 stream (1 hop per push)        cpu      99.73 ggml    2162.69 x 21.69
+firered-stream-vad-q8_0.gguf   t=4 streams S=64                   cpu      23.99 ggml     192.18 x 8.01
+firered-stream-vad-q8_0.gguf   t=4 offline (vad_detect)           cpu      17.70 ggml     138.42 x 7.82
 
-[silero-v6.2-f16 t=4 cpu] silero (speech), 67.8 s audio, hop 512, lookahead 0 (us per output)
-  stream (1 hop per push)              138.54
-  offline (vad_detect)                  81.77
-  streams S=64                          53.96
-
-[silero-v6.2-f16 t=4 ggml-cpu] silero (speech), 67.8 s audio, hop 512, lookahead 0 (us per output)
-  stream (1 hop per push)              213.14
-  offline (vad_detect)                  62.39
-  streams S=64                          54.15
-
-[silero-v6.2-q8_0 t=1 cpu] silero (speech), 67.8 s audio, hop 512, lookahead 0 (us per output)
-  stream (1 hop per push)              121.35
-  offline (vad_detect)                  98.85
-  streams S=64                          88.27
-
-[silero-v6.2-q8_0 t=1 ggml-cpu] silero (speech), 67.8 s audio, hop 512, lookahead 0 (us per output)
-  stream (1 hop per push)               79.98
-  offline (vad_detect)                  77.45
-  streams S=64                          75.95
-
-[silero-v6.2-q8_0 t=4 cpu] silero (speech), 67.8 s audio, hop 512, lookahead 0 (us per output)
-  stream (1 hop per push)              133.70
-  offline (vad_detect)                  76.73
-  streams S=64                          51.65
-
-[silero-v6.2-q8_0 t=4 ggml-cpu] silero (speech), 67.8 s audio, hop 512, lookahead 0 (us per output)
-  stream (1 hop per push)              229.32
-  offline (vad_detect)                  67.55
-  streams S=64                          58.75
-
-[firered-stream-vad t=1 cpu] firered (speech), 67.8 s audio, hop 160, lookahead 0 (us per output)
-  stream (1 hop per push)              318.35
-  offline (vad_detect)                  89.49
-  streams S=64                          96.51
-
-[firered-stream-vad t=1 ggml-cpu] firered (speech), 67.8 s audio, hop 160, lookahead 0 (us per output)
-  stream (1 hop per push)              210.41
-  offline (vad_detect)                 114.37
-  streams S=64                         141.23
-
-[firered-stream-vad t=4 cpu] firered (speech), 67.8 s audio, hop 160, lookahead 0 (us per output)
-  stream (1 hop per push)              324.64
-  offline (vad_detect)                  69.81
-  streams S=64                          70.03
-
-[firered-stream-vad t=4 ggml-cpu] firered (speech), 67.8 s audio, hop 160, lookahead 0 (us per output)
-  stream (1 hop per push)              530.46
-  offline (vad_detect)                  92.64
-  streams S=64                         117.73
-
-[firered-stream-vad-f16 t=1 cpu] firered (speech), 67.8 s audio, hop 160, lookahead 0 (us per output)
-  stream (1 hop per push)              314.26
-  offline (vad_detect)                 107.51
-  streams S=64                         117.59
-
-[firered-stream-vad-f16 t=1 ggml-cpu] firered (speech), 67.8 s audio, hop 160, lookahead 0 (us per output)
-  stream (1 hop per push)              168.03
-  offline (vad_detect)                  95.35
-  streams S=64                         123.22
-
-[firered-stream-vad-f16 t=4 cpu] firered (speech), 67.8 s audio, hop 160, lookahead 0 (us per output)
-  stream (1 hop per push)              313.95
-  offline (vad_detect)                  73.25
-  streams S=64                          90.21
-
-[firered-stream-vad-f16 t=4 ggml-cpu] firered (speech), 67.8 s audio, hop 160, lookahead 0 (us per output)
-  stream (1 hop per push)              491.78
-  offline (vad_detect)                  88.23
-  streams S=64                         105.11
-
-[firered-stream-vad-q8_0 t=1 cpu] firered (speech), 67.8 s audio, hop 160, lookahead 0 (us per output)
-  stream (1 hop per push)              280.74
-  offline (vad_detect)                 111.34
-  streams S=64                         117.18
-
-[firered-stream-vad-q8_0 t=1 ggml-cpu] firered (speech), 67.8 s audio, hop 160, lookahead 0 (us per output)
-  stream (1 hop per push)              141.12
-  offline (vad_detect)                  92.53
-  streams S=64                         118.39
-
-[firered-stream-vad-q8_0 t=4 cpu] firered (speech), 67.8 s audio, hop 160, lookahead 0 (us per output)
-  stream (1 hop per push)              281.26
-  offline (vad_detect)                  75.77
-  streams S=64                          77.82
-
-[firered-stream-vad-q8_0 t=4 ggml-cpu] firered (speech), 67.8 s audio, hop 160, lookahead 0 (us per output)
-  stream (1 hop per push)              394.36
-  offline (vad_detect)                  80.49
-  streams S=64                         103.24
-[smart-turn-v3.2 t=8 cpu] smart_turn (turn end), 11.0 s audio, hop 8000, lookahead 0 (us per output)
-  end of audio only                 279677.10
-[smart-turn-v3.2 t=8 ggml-cpu] smart_turn (turn end), 11.0 s audio, hop 8000, lookahead 0 (us per output)
-  end of audio only                 197824.30
-[smart-turn-v3.2-q8_0 t=8 cpu] smart_turn (turn end), 11.0 s audio, hop 8000, lookahead 0 (us per output)
-  end of audio only                 187955.97
-[smart-turn-v3.2-q8_0 t=8 ggml-cpu] smart_turn (turn end), 11.0 s audio, hop 8000, lookahead 0 (us per output)
-  end of audio only                 145285.10
-  offline (vad_detect)                  55.59
-  window slice 1000ms la max           218.40
-  window slice 1000ms la 500ms         162.59
+# smart-turn-v3.2-f16 (assets/jfk.wav), min of 2 runs; ggml-cpu one run
+smart-turn-v3.2-f16.gguf       t=4 stream (1 hop per push)        cpu  102091.80 ggml  166836.68 x 1.63
+smart-turn-v3.2-f16.gguf       t=4 offline (vad_detect)           cpu  153983.58 ggml  306433.10 x 1.99
+smart-turn-v3.2-f16.gguf       t=4 streams S=8                    cpu  123050.60 ggml  202660.22 x 1.65
+smart-turn-v3.2-f16.gguf       t=8 stream (1 hop per push)        cpu  123177.67 ggml  251694.19 x 2.04
+smart-turn-v3.2-f16.gguf       t=8 offline (vad_detect)           cpu  165892.50 ggml  321161.39 x 1.94
+smart-turn-v3.2-f16.gguf       t=8 streams S=8                    cpu  151043.02 ggml  225814.28 x 1.50
