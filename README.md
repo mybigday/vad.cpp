@@ -54,6 +54,8 @@ cmake --build build -j
 
 ARM cross-compilation, WebAssembly (node, browsers) and WebGPU are covered in [docs/platforms.md](docs/platforms.md).
 
+The `third_party/ggml` submodule is pinned to the ggml that [whisper.rn](https://github.com/mybigday/whisper.rn) vendors (ggml 0.26.0, `ffa4e8b8`, the version synced into its whisper.cpp), so both can share one ggml build. vad.cpp's `vad-cpu` backend uses ggml's backend interface headers, so move the pin together with whisper.rn's.
+
 When vad.cpp is used as a subdirectory and the parent project already defines a `ggml` target (for example whisper.cpp or llama.cpp), vad.cpp reuses it.
 
 ## Models
