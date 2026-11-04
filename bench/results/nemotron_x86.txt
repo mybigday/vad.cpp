@@ -1,0 +1,33 @@
+# Nemotron-3-Diarization (F32 and official Q8_0), AMD Ryzen AI MAX+ 395 (Zen 5, 16C/32T, avx512 kernels), Radeon 8060S (RADV)
+# 83.6 s four-speaker recording (models/ref/conversation.f32); us per output frame (10 ms, 8 speakers)
+# stream = default stream params (9-frame chunks + 4 look-ahead = 1.04 s latency), offline = vad_detect
+[nemotron-3-diarization t=4 cpu] sortformer (speakers), 83.6 s audio, hop 160, lookahead 51200 (us per output frame)
+  stream (1 hop per push)             1567.55
+  offline (vad_detect)                  81.79
+[nemotron-3-diarization t=4 ggml-cpu] sortformer (speakers), 83.6 s audio, hop 160, lookahead 51200 (us per output frame)
+  stream (1 hop per push)             3927.18
+  offline (vad_detect)                 215.46
+[nemotron-3-diarization t=16 cpu] sortformer (speakers), 83.6 s audio, hop 160, lookahead 51200 (us per output frame)
+  stream (1 hop per push)              725.04
+  offline (vad_detect)                  38.23
+[nemotron-3-diarization t=16 ggml-cpu] sortformer (speakers), 83.6 s audio, hop 160, lookahead 51200 (us per output frame)
+  stream (1 hop per push)             1532.51
+  offline (vad_detect)                  81.92
+[nemotron-3-diarization Vulkan0] sortformer (speakers), 83.6 s audio, hop 160, lookahead 51200 (us per output frame)
+  stream (1 hop per push)              335.24
+  offline (vad_detect)                  27.46
+[Nemotron-3-Diarization.q8_0 t=4 cpu] sortformer (speakers), 83.6 s audio, hop 160, lookahead 51200 (us per output frame)
+  stream (1 hop per push)             1449.43
+  offline (vad_detect)                  78.13
+[Nemotron-3-Diarization.q8_0 t=4 ggml-cpu] sortformer (speakers), 83.6 s audio, hop 160, lookahead 51200 (us per output frame)
+  stream (1 hop per push)             4768.97
+  offline (vad_detect)                 261.29
+[Nemotron-3-Diarization.q8_0 t=16 cpu] sortformer (speakers), 83.6 s audio, hop 160, lookahead 51200 (us per output frame)
+  stream (1 hop per push)              684.71
+  offline (vad_detect)                  34.20
+[Nemotron-3-Diarization.q8_0 t=16 ggml-cpu] sortformer (speakers), 83.6 s audio, hop 160, lookahead 51200 (us per output frame)
+  stream (1 hop per push)             1741.03
+  offline (vad_detect)                  95.27
+[Nemotron-3-Diarization.q8_0 Vulkan0] sortformer (speakers), 83.6 s audio, hop 160, lookahead 51200 (us per output frame)
+  stream (1 hop per push)              267.97
+  offline (vad_detect)                  25.23

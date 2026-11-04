@@ -1,0 +1,18 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>vad.cpp — per-node device vs CPU</title></head>
+<body><pre id="out"></pre>
+<script type="module">
+// /examples/web/debug.html?build=build-web&model=firered-stream-vad.gguf&device=WebGPU&B=2&T=3
+const out = document.getElementById('out');
+const q = new URLSearchParams(location.search);
+const { default: create } = await import(`../../${q.get('build') || 'build-web'}/vad-web-debug.mjs`);
+const lines = [];
+const M = await create({ print: (s) => lines.push(s), printErr: (s) => lines.push(s) });
+const model = q.get('model');
+M.FS.writeFile('/' + model, new Uint8Array(await (await fetch(`../../models/${model}`)).arrayBuffer()));
+const args = ['x', '/' + model, q.get('device') || 'WebGPU', q.get('B') || '2', q.get('T') || '3'];
+const argv = M._malloc(4 * args.length);
+args.forEach((a, i) => { M.HEAPU32[argv / 4 + i] = M.stringToNewUTF8(a); });
+await M._vad_compare_backends(args.length, argv);
+out.textContent = lines.join('\n') + '\ndone';
+</script></body></html>

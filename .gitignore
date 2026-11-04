@@ -1,0 +1,12 @@
+/build*/
+/.venv/
+/models/
+/assets/*.f32
+/assets/*.npy
+/third_party/whisper.cpp/
+__pycache__/
+*.gguf
+*.onnx
+/.cache/
+/assets/test_16k.wav
+*.pyc

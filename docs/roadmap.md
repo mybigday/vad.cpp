@@ -1,0 +1,39 @@
+# Roadmap
+
+## Models
+
+| model | output | license | plan |
+|---|---|---|---|
+| [desert-ant-labs/who](https://huggingface.co/desert-ant-labs/who) | speaker diarization / recognition | Desert Ant Labs Source-Available | planned; only ONNX/TFLite/Core ML are published, so it needs an ONNX converter |
+
+Done: [nvidia/Nemotron-3-Diarization](https://huggingface.co/nvidia/Nemotron-3-Diarization) (`sortformer`, docs/gguf.md). It loads NVIDIA's GGUF as is and the safetensors through `tools/convert_sortformer.py`. Offline and streaming match the transformers implementation within 2e-5 on CPU. Open items:
+- The `head.activity_head` of the published GGUF (LayerNorm + 3 classes) is not in the reference model. Expose it once its meaning is documented.
+- `vad_streams_push` runs diarization streams one after another. Batching the chunk steps of several streams needs per-stream masks in one encoder graph.
+- Web and ARM have not been tried yet. The F32 file is 400 MB and NVIDIA's Q8_0 file is 107 MB.
+
+## Platforms
+
+- **Web:** WASM (CPU, SIMD128) and WebGPU are done (docs/platforms.md).
+  - Open issue: ggml-cpu (not `vad-cpu`) on WASM gives wrong results with F16 weights (smart-turn F16: 0.52 deviation). Investigate or report upstream.
+- **ARM:**
+  - Verified on a MediaTek Genio board (aarch64 Linux, Cortex-A55 + A78): all tests pass with the `vad-cpu` kernels.
+  - Benchmarks are in `bench/results/arm_genio.txt`.
+
+## Performance
+
+- Done on x86 (AMD Zen 5, `bench/results/`): `vad-cpu` beats ggml-cpu on every model, precision, thread count (1–16) and benchmark mode.
+  - The large-batch GEMM is a cache-blocked, register-tiled microkernel with K blocking and 2D task tiling.
+  - The thread pool has per-thread task ranges, work stealing and per-task completion.
+  - SSM_CONV, FSMN, ROPE and softmax with masks run natively.
+  - Unary math is vectorized.
+- **ARM.**
+  - Done: an ARMv8.2 (fp16 + dotprod) variant chosen at runtime, NEON register tiles, streaming one-row F32 GEMV, and per-ISA thread-pool tuning (timed spin; few-row GEMMs split only when the work pays for the dispatch, 2 chunks per thread for big.LITTLE).
+  - On the Genio board `vad-cpu` matches or beats ggml-cpu (`bench/results/arm_genio.txt`).
+  - Single-thread FireRed F32 streaming is the closest case, at parity within noise. It is bound by streaming 2.8 MB of F32 weights per 10 ms frame.
+  - To do:
+    - SVE variants.
+    - A faster front end. The FireRed fbank is a 400 → 514 F32 DFT matrix (~0.8 MB per frame). A real FFT would remove most of it on every backend.
+- **Stream vs offline on aarch64.** FireRed differs by 1.8e-7 between streaming and offline, even for F32 files (exact on x86). Within tolerance; the cause is not located yet.
+- **int8 dot product (VNNI) for Q8_0 files on x86.** On x86 the Q8_0 path is still weight-only (int8 → F32 per element), so it is slower than F32. ARM already uses int8 activations with `SDOT`.
+- Fuse the LSTM cell for Silero's multi-chunk graphs.
+- Batch sliding-window streams across streams in `vad_streams_push`.

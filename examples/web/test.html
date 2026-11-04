@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>vad.cpp — browser test (WASM CPU / WebGPU)</title>
+<style>
+  body { font: 14px/1.4 system-ui, sans-serif; margin: 2rem; }
+  pre { background: #f4f4f4; padding: 1rem; white-space: pre-wrap; }
+</style>
+</head>
+<body>
+<h1>vad.cpp in the browser</h1>
+<p>Runs every model on every device against the official reference probabilities.
+Serve the repository root (<code>python -m http.server</code>) and open
+<code>/examples/web/test.html?build=build-web</code>.</p>
+<pre id="out">running…</pre>
+<script type="module">
+const out = document.getElementById('out');
+const log = (s) => { out.textContent += s + '\n'; console.log(s); };
+out.textContent = '';
+
+const params = new URLSearchParams(location.search);
+const build = params.get('build') || 'build-web';
+const root = '../..';
+const { default: createVad } = await import(`${root}/${build}/vad-web.mjs`);
+const M = await createVad();
+const call = async (name, ...args) => await M['_' + name](...args);   // JSPI exports may return promises
+
+const fetchBytes = async (url) => new Uint8Array(await (await fetch(url)).arrayBuffer());
+const f32 = (u8) => new Float32Array(u8.buffer, u8.byteOffset, u8.byteLength / 4);
+
+// the exact 16 kHz float samples the references were computed from (scripts/prepare-test-data.sh)
+const audio = f32(await fetchBytes(`${root}/models/ref/jfk.f32`));
+const cases = [
+  { file: 'silero-v6.2.gguf',        ref: 'jfk.silero-v6.2.probs.f32' },
+  { file: 'ggml-silero-v6.2.0.bin',  ref: 'jfk.silero-v6.2.probs.f32' },
+  { file: 'firered-stream-vad.gguf', ref: 'jfk.firered-stream.probs.f32' },
+  { file: 'firered-vad.gguf',        ref: 'jfk.firered-vad.probs.f32' },
+  { file: 'smart-turn-v3.2.gguf',    ref: 'smart-turn.txt' },
+];
+
+const nDev = await call('vad_device_count');
+const devices = [];
+for (let i = 0; i < nDev; ++i) devices.push(M.UTF8ToString(await call('vad_device_name', i)));
+log(`devices: ${devices.join(', ')}`);
+
+const results = [];
+const aPtr = M._malloc(audio.length * 4);
+M.HEAPF32.set(audio, aPtr / 4);
+const maxProbs = audio.length;   // generous
+const pPtr = M._malloc(maxProbs * 4);
+
+for (const dev of devices.filter((d) => d !== 'ggml-cpu')) {
+  for (const c of cases) {
+    const path = '/' + c.file;
+    if (!M.FS.analyzePath(path).exists) M.FS.writeFile(path, await fetchBytes(`${root}/models/${c.file}`));
+    const devStr = M.stringToNewUTF8(dev), pathStr = M.stringToNewUTF8(path);
+    const m = await call('vad_web_model_load', pathStr, devStr, 1);
+    M._free(devStr); M._free(pathStr);
+    if (!m) { log(`${dev.padEnd(8)} ${c.file.padEnd(26)} LOAD FAILED`); results.push({ dev, file: c.file, ok: false }); continue; }
+
+    let maxDiff = 0, n = 0, ms = 0;
+    if (c.ref.endsWith('.txt')) {
+      // turn end: probability for the audio ending at each reference point
+      const lines = (await (await fetch(`${root}/models/ref/${c.ref}`)).text()).trim().split('\n');
+      const t0 = performance.now();
+      for (const line of lines) {
+        const [, end, prob] = line.split(' ');
+        const k = await call('vad_web_detect', m, 0x7fffffff, -1, aPtr, Number(end), pPtr, 1);
+        maxDiff = Math.max(maxDiff, Math.abs(M.HEAPF32[pPtr / 4] - Number(prob)));
+        n += k;
+      }
+      ms = performance.now() - t0;
+    } else {
+      const ref = f32(await fetchBytes(`${root}/models/ref/${c.ref}`));
+      const t0 = performance.now();
+      n = await call('vad_detect', m, aPtr, audio.length, pPtr, maxProbs);
+      ms = performance.now() - t0;
+      const p = M.HEAPF32.subarray(pPtr / 4, pPtr / 4 + Math.min(n, ref.length));
+      for (let i = 0; i < p.length; ++i) maxDiff = Math.max(maxDiff, Math.abs(p[i] - ref[i]));
+    }
+    await call('vad_model_free', m);
+    log(`${dev.padEnd(8)} ${c.file.padEnd(26)} outputs ${String(n).padStart(5)}  max|p - official| ${maxDiff.toExponential(2)}  ${ms.toFixed(1)} ms`);
+    results.push({ dev, file: c.file, n, maxDiff, ms, ok: true });
+  }
+}
+window.vadResults = results;
+log('done');
+</script>
+</body>
+</html>

@@ -1,0 +1,135 @@
+test_kernels: ok
+test_segments: ok
+test_models: ok
+test_turn: ok
+
+[silero-v6.2 t=1 cpu] silero (speech), 67.8 s audio, hop 512, lookahead 0 (us per output)
+  stream (1 hop per push)              126.45
+  offline (vad_detect)                  72.48
+  streams S=64                          65.51
+
+[silero-v6.2 t=1 ggml-cpu] silero (speech), 67.8 s audio, hop 512, lookahead 0 (us per output)
+  stream (1 hop per push)              119.94
+  offline (vad_detect)                  95.51
+  streams S=64                          93.53
+
+[silero-v6.2 t=4 cpu] silero (speech), 67.8 s audio, hop 512, lookahead 0 (us per output)
+  stream (1 hop per push)              160.35
+  offline (vad_detect)                  75.59
+  streams S=64                          47.31
+
+[silero-v6.2 t=4 ggml-cpu] silero (speech), 67.8 s audio, hop 512, lookahead 0 (us per output)
+  stream (1 hop per push)              283.86
+  offline (vad_detect)                  80.31
+  streams S=64                          68.53
+
+[silero-v6.2-f16 t=1 cpu] silero (speech), 67.8 s audio, hop 512, lookahead 0 (us per output)
+  stream (1 hop per push)              125.37
+  offline (vad_detect)                 108.66
+  streams S=64                          94.37
+
+[silero-v6.2-f16 t=1 ggml-cpu] silero (speech), 67.8 s audio, hop 512, lookahead 0 (us per output)
+  stream (1 hop per push)               71.50
+  offline (vad_detect)                  69.64
+  streams S=64                          68.33
+
+[silero-v6.2-f16 t=4 cpu] silero (speech), 67.8 s audio, hop 512, lookahead 0 (us per output)
+  stream (1 hop per push)              138.54
+  offline (vad_detect)                  81.77
+  streams S=64                          53.96
+
+[silero-v6.2-f16 t=4 ggml-cpu] silero (speech), 67.8 s audio, hop 512, lookahead 0 (us per output)
+  stream (1 hop per push)              213.14
+  offline (vad_detect)                  62.39
+  streams S=64                          54.15
+
+[silero-v6.2-q8_0 t=1 cpu] silero (speech), 67.8 s audio, hop 512, lookahead 0 (us per output)
+  stream (1 hop per push)              121.35
+  offline (vad_detect)                  98.85
+  streams S=64                          88.27
+
+[silero-v6.2-q8_0 t=1 ggml-cpu] silero (speech), 67.8 s audio, hop 512, lookahead 0 (us per output)
+  stream (1 hop per push)               79.98
+  offline (vad_detect)                  77.45
+  streams S=64                          75.95
+
+[silero-v6.2-q8_0 t=4 cpu] silero (speech), 67.8 s audio, hop 512, lookahead 0 (us per output)
+  stream (1 hop per push)              133.70
+  offline (vad_detect)                  76.73
+  streams S=64                          51.65
+
+[silero-v6.2-q8_0 t=4 ggml-cpu] silero (speech), 67.8 s audio, hop 512, lookahead 0 (us per output)
+  stream (1 hop per push)              229.32
+  offline (vad_detect)                  67.55
+  streams S=64                          58.75
+
+[firered-stream-vad t=1 cpu] firered (speech), 67.8 s audio, hop 160, lookahead 0 (us per output)
+  stream (1 hop per push)              318.35
+  offline (vad_detect)                  89.49
+  streams S=64                          96.51
+
+[firered-stream-vad t=1 ggml-cpu] firered (speech), 67.8 s audio, hop 160, lookahead 0 (us per output)
+  stream (1 hop per push)              210.41
+  offline (vad_detect)                 114.37
+  streams S=64                         141.23
+
+[firered-stream-vad t=4 cpu] firered (speech), 67.8 s audio, hop 160, lookahead 0 (us per output)
+  stream (1 hop per push)              324.64
+  offline (vad_detect)                  69.81
+  streams S=64                          70.03
+
+[firered-stream-vad t=4 ggml-cpu] firered (speech), 67.8 s audio, hop 160, lookahead 0 (us per output)
+  stream (1 hop per push)              530.46
+  offline (vad_detect)                  92.64
+  streams S=64                         117.73
+
+[firered-stream-vad-f16 t=1 cpu] firered (speech), 67.8 s audio, hop 160, lookahead 0 (us per output)
+  stream (1 hop per push)              314.26
+  offline (vad_detect)                 107.51
+  streams S=64                         117.59
+
+[firered-stream-vad-f16 t=1 ggml-cpu] firered (speech), 67.8 s audio, hop 160, lookahead 0 (us per output)
+  stream (1 hop per push)              168.03
+  offline (vad_detect)                  95.35
+  streams S=64                         123.22
+
+[firered-stream-vad-f16 t=4 cpu] firered (speech), 67.8 s audio, hop 160, lookahead 0 (us per output)
+  stream (1 hop per push)              313.95
+  offline (vad_detect)                  73.25
+  streams S=64                          90.21
+
+[firered-stream-vad-f16 t=4 ggml-cpu] firered (speech), 67.8 s audio, hop 160, lookahead 0 (us per output)
+  stream (1 hop per push)              491.78
+  offline (vad_detect)                  88.23
+  streams S=64                         105.11
+
+[firered-stream-vad-q8_0 t=1 cpu] firered (speech), 67.8 s audio, hop 160, lookahead 0 (us per output)
+  stream (1 hop per push)              280.74
+  offline (vad_detect)                 111.34
+  streams S=64                         117.18
+
+[firered-stream-vad-q8_0 t=1 ggml-cpu] firered (speech), 67.8 s audio, hop 160, lookahead 0 (us per output)
+  stream (1 hop per push)              141.12
+  offline (vad_detect)                  92.53
+  streams S=64                         118.39
+
+[firered-stream-vad-q8_0 t=4 cpu] firered (speech), 67.8 s audio, hop 160, lookahead 0 (us per output)
+  stream (1 hop per push)              281.26
+  offline (vad_detect)                  75.77
+  streams S=64                          77.82
+
+[firered-stream-vad-q8_0 t=4 ggml-cpu] firered (speech), 67.8 s audio, hop 160, lookahead 0 (us per output)
+  stream (1 hop per push)              394.36
+  offline (vad_detect)                  80.49
+  streams S=64                         103.24
+[smart-turn-v3.2 t=8 cpu] smart_turn (turn end), 11.0 s audio, hop 8000, lookahead 0 (us per output)
+  end of audio only                 279677.10
+[smart-turn-v3.2 t=8 ggml-cpu] smart_turn (turn end), 11.0 s audio, hop 8000, lookahead 0 (us per output)
+  end of audio only                 197824.30
+[smart-turn-v3.2-q8_0 t=8 cpu] smart_turn (turn end), 11.0 s audio, hop 8000, lookahead 0 (us per output)
+  end of audio only                 187955.97
+[smart-turn-v3.2-q8_0 t=8 ggml-cpu] smart_turn (turn end), 11.0 s audio, hop 8000, lookahead 0 (us per output)
+  end of audio only                 145285.10
+  offline (vad_detect)                  55.59
+  window slice 1000ms la max           218.40
+  window slice 1000ms la 500ms         162.59
